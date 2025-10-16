@@ -249,15 +249,18 @@ Licensed under Apache License Version 2.0
 - [ ] **LLM integration for log parsing** - Use AI to analyze failures:
   - Extract root causes from log files
   - Identify patterns across similar failures
-  - Generate human-readable summaries
-- [ ] **Failure clustering** - Group similar failures together:
-  - Cluster by error message similarity
-  - Cluster by stack traces
-  - Cluster by affected components
-- [ ] **Root cause suggestions** - AI-powered recommendations:
-  - Suggest potential fixes based on error patterns
-  - Link to similar past issues
-  - Prioritize failures by impact
+  - Suggest fixes based on historical data
+- [ ] **Pattern-based root cause detection** - Regex patterns for common failures
+- [ ] **Semantic search** - Find similar past failures using embeddings (pgvector)
+
+#### Phase 3 - Nice to Have Features 🌟
+- [ ] **Historical comparison** - LLM can request previous run logs with their root causes for pattern comparison
+- [ ] **Dynamic log exploration** - LLM can provide regex patterns that the client executes and returns matching log segments
+- [ ] **Interactive analysis** - Multi-turn conversation where LLM requests specific context iteratively:
+  - Specific file contents from repository
+  - Diff between failing and passing runs
+  - Related workflow step outputs
+  - List of recent changes/commits
 
 **Benefits:** Faster debugging, pattern recognition, proactive issue detection
 

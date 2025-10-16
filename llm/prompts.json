@@ -1,0 +1,56 @@
+{
+  "rootCauseAnalysis": {
+    "version": "1.0",
+    "system": "You are an expert DevOps engineer analyzing GitHub Actions workflow failures. You can request more context if needed by asking for more log lines.",
+    "userTemplate": "Analyze the following failure:\n\nJob: {{jobName}}\nWorkflow: {{workflowName}}\nRepository: {{repository}}\n\nError Annotations:\n{{errorAnnotations}}\n\nFailed Steps:\n{{failedSteps}}\n\nLast 50 log lines:\n{{logLines}}\n\nProvide either a root cause analysis OR request more information if needed.",
+    "outputFormat": {
+      "type": "discriminated_union",
+      "discriminator": "type",
+      "schemas": {
+        "root_cause": {
+          "type": "root_cause",
+          "category": "string (build|test|deployment|dependency|infrastructure|authentication|timeout|resource|unknown)",
+          "title": "string (max 80 chars)",
+          "description": "string",
+          "confidence": "number (0-1)",
+          "suggested_fix": "string",
+          "reasoning": "string"
+        },
+        "need_more_info": {
+          "type": "need_more_info",
+          "reason": "string (explain why you need more context)",
+          "request": {
+            "more_lines": "number (how many more lines needed)",
+            "direction": "string (before|after|both - relative to current 50 lines)"
+          }
+        }
+      }
+    },
+    "examples": [
+      {
+        "scenario": "Clear root cause",
+        "response": {
+          "type": "root_cause",
+          "category": "dependency",
+          "title": "NPM package not found",
+          "confidence": 0.95,
+          "description": "The build failed because package 'xyz' could not be found in npm registry",
+          "suggested_fix": "Verify package name is correct or check if package registry is accessible",
+          "reasoning": "Error message clearly indicates missing package during npm install step"
+        }
+      },
+      {
+        "scenario": "Need more context",
+        "response": {
+          "type": "need_more_info",
+          "reason": "The error appears in the logs but the actual failure point is not visible. Need to see more context before the error to understand what triggered it.",
+          "request": {
+            "more_lines": 100,
+            "direction": "before"
+          }
+        }
+      }
+    ]
+  }
+}
+
