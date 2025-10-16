@@ -1,0 +1,19 @@
+{
+  "repository": "camunda/camunda-7-to-8-data-migrator",
+  "downloadLogs": true,
+  "forceDownload": false,
+  "logsDirectory": "./files",
+  "workflows": [
+    {
+      "name": "CI Pipeline",
+      "enabled": true,
+      "fetchLastRuns": 5,
+      "workflowFileName": "ci.yml"
+    }
+  ],
+  "singleRun": {
+    "enabled": false,
+    "url": ""
+  }
+}
+
