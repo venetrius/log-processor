@@ -1,4 +1,3 @@
-
 /*
  * Copyright Camunda Services GmbH and/or licensed to Camunda Services GmbH
  * under one or more contributor license agreements. See the NOTICE file
@@ -135,6 +134,8 @@ async function dropSchema() {
     await db.query('DROP TABLE IF EXISTS job_steps CASCADE;');
     await db.query('DROP TABLE IF EXISTS jobs CASCADE;');
     await db.query('DROP TABLE IF EXISTS workflow_runs CASCADE;');
+    await db.query('DROP TABLE IF EXISTS job_root_causes CASCADE;');
+    await db.query('DROP TABLE IF EXISTS root_causes CASCADE;');
     console.log('✅ All tables dropped');
   } catch (error) {
     console.error('❌ Error dropping schema:', error.message);

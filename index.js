@@ -22,8 +22,10 @@ const { runGhCommand, runCommandToFile } = require('./ghCommand.js')
 const { loadConfig, validateConfig, ensureLogsDirectory, logFileExists } = require('./configLoader.js')
 const db = require('./db.js')
 const repository = require('./repository.js')
-const rootCauseAnalyzer = require('./rootCauseAnalyzer.js')
 const enhancedStats = require('./enhancedStats.js')
+const rootCauseService = require('./services/rootCauseService')
+const { createLLMClient } = require('./llm/llmClient')
+const { PromptBuilder } = require('./llm/promptBuilder')
 const { fetchJobLogs } = require('./manualLogDownload/index')
 
 const getErrorAnnotations = async jobId => {
@@ -133,7 +135,13 @@ const parseJobs = async (jobs, runId, config) => {
                         raw_details: annotation
                     });
                 }
-              await rootCauseAnalyzer.analyzeJob(job.id, errorAnnotations, failedSteps);
+
+                // Analyze root cause with context
+                await rootCauseService.analyzeJob(job.id, errorAnnotations, failedSteps, {
+                    jobName: job.name,
+                    workflowName: config.workflowName || 'Unknown',
+                    repository: config.repository
+                });
             } catch (dbError) {
                 console.error(`   ⚠️  Database error for job ${jobId}:`, dbError.message);
             }
@@ -145,7 +153,7 @@ const loadLogs = async (url, config, runData = null) => {
     const match = url.match(/\/actions\/runs\/(\d+)/);
     const runId = match ? match[1] : null;
 
-    const exists = await rootCauseAnalyzer.workflowRunExists(runId);
+    const exists = await rootCauseService.workflowRunExists(runId);
     if (exists) {
       console.log(`⏭️  Run ${runId} already processed, skipping...`);
       return;
@@ -175,7 +183,7 @@ const loadLogs = async (url, config, runData = null) => {
 
     const command = `gh api repos/${config.repository}/actions/runs/${runId}/jobs`
     const jobs = await runGhCommand(command)
-    
+
     await parseJobs(jobs.jobs, runId, config)
 }
 
@@ -209,10 +217,45 @@ const processAll = async () => {
         console.warn('⚠️  Database connection failed. Continuing without database persistence.');
     }
 
+    // Initialize LLM integration if enabled
+    if (config.llm && config.llm.enabled) {
+        console.log('\n🤖 Initializing LLM integration...');
+        console.log(`   Provider: ${config.llm.provider}`);
+        console.log(`   Model: ${config.llm.model}`);
+        console.log(`   Confidence threshold: ${config.llm.confidenceThreshold}`);
+
+        try {
+            const llmClient = createLLMClient(config.llm);
+            const promptBuilder = new PromptBuilder();
+
+            rootCauseService.initialize({
+                llmClient,
+                promptBuilder,
+                options: {
+                    enableLLM: true,
+                    confidenceThreshold: config.llm.confidenceThreshold || 0.8
+                }
+            });
+            console.log('   ✅ LLM integration initialized');
+        } catch (error) {
+            console.error(`   ⚠️  LLM initialization failed: ${error.message}`);
+            console.log('   Continuing with pattern-only analysis...');
+        }
+    } else {
+        // Initialize service with LLM disabled
+        const promptBuilder = new PromptBuilder();
+        rootCauseService.initialize({
+            llmClient: null,
+            promptBuilder,
+            options: { enableLLM: false }
+        });
+    }
+
     console.log(`\n🚀 Log Processor Started`);
     console.log(`📦 Repository: ${config.repository}`);
     console.log(`💾 Download logs: ${config.downloadLogs ? 'Yes' : 'No'}`);
     console.log(`🔄 Force download: ${config.forceDownload ? 'Yes' : 'No'}`);
+    console.log(`🤖 LLM Analysis: ${config.llm?.enabled ? 'Enabled' : 'Disabled'}`);
 
     // Process single run if enabled
     if (config.singleRun.enabled && config.singleRun.url) {
@@ -261,7 +304,7 @@ const processAll = async () => {
 
     console.log(`\n✨ Processing complete!`);
 
-    // Display statistics if database is connected 
+    // Display statistics if database is connected
     // TODO: connect to DB only if stats or persistence is enabled
     // TODO: move stats display to separate module
     if (dbConnected) {
@@ -273,7 +316,7 @@ const processAll = async () => {
             console.log(`   Failed jobs: ${stats.failed_jobs}`);
             console.log(`   Error annotations: ${stats.total_error_annotations}`);
             console.log(`\n🎯 Root Cause Analysis:`);
-            const rcStats = await enhancedStats.getRootCauseStatsDetailed(config.repository);            
+            const rcStats = await enhancedStats.getRootCauseStatsDetailed(config.repository);
             console.log(`   Jobs analyzed: ${rcStats.jobs_with_root_cause || 0}`);
             console.log(`   Pattern matched: ${rcStats.pattern_matched || 0}`);
             console.log(`   Jobs without match: ${rcStats.jobs_without_root_cause || 0}`);
@@ -295,3 +338,4 @@ processAll().catch(error => {
     // Close database connection pool
     await db.end();
 });
+

@@ -26,6 +26,15 @@ const DEFAULT_CONFIG = {
   singleRun: {
     enabled: true,
     url: ""
+  },
+  llm: {
+    enabled: false,
+    provider: 'mock',
+    model: 'mock-v1',
+    maxTokens: 1000,
+    temperature: 0.1,
+    confidenceThreshold: 0.8,
+    fallbackToPattern: true
   }
 };
 
@@ -35,20 +44,40 @@ const DEFAULT_CONFIG = {
  */
 function loadConfig() {
   const configPath = path.join(__dirname, 'config.json');
-  let config = {};
+  let fileConfig = {};
+
   if (!fs.existsSync(configPath)) {
-    console.errpr('❌ config.json not found, using defaults');
-    process.exit(-1);
+    console.error('❌ config.json not found, using defaults');
+    const cfg = { ...DEFAULT_CONFIG };
+    if (process.env.USE_LLM_ANALYZER) {
+      cfg.llm.enabled = process.env.USE_LLM_ANALYZER === 'true';
+    }
+    return cfg;
   }
 
   try {
-    const configData = fs.readFileSync(configPath, 'utf8');
-    config = JSON.parse(configData);
-    return { ...DEFAULT_CONFIG, ...config };
+    const raw = fs.readFileSync(configPath, 'utf8');
+    fileConfig = JSON.parse(raw);
   } catch (error) {
-    console.error('❌ Failed to parse config.json:', error.message);
-    process.exit(-1);
+    console.error('❌ Failed to parse config.json, using defaults:', error.message);
+    const cfg = { ...DEFAULT_CONFIG };
+    cfg.llm.enabled = false;
+    return cfg;
   }
+
+  // Deep merge llm config
+  const merged = {
+    ...DEFAULT_CONFIG,
+    ...fileConfig,
+    llm: { ...DEFAULT_CONFIG.llm, ...(fileConfig.llm || {}) }
+  };
+
+  // Environment variable override
+  if (process.env.USE_LLM_ANALYZER) {
+    merged.llm.enabled = process.env.USE_LLM_ANALYZER === 'true';
+  }
+
+  return merged;
 }
 
 /**
