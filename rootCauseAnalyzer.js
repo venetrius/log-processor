@@ -162,33 +162,12 @@ async function workflowRunExists(runId) {
   return result.rows.length > 0;
 }
 
-/**
- * Get statistics about root cause detection
- */
-async function getRootCauseStats(repository) {
-  const result = await db.query(`
-    SELECT 
-      COUNT(DISTINCT jrc.job_id) as jobs_with_root_cause,
-      COUNT(DISTINCT CASE WHEN jrc.detection_method = 'pattern' THEN jrc.job_id END) as pattern_matched,
-      COUNT(DISTINCT CASE WHEN jrc.detection_method LIKE 'llm%' THEN jrc.job_id END) as llm_analyzed,
-      AVG(jrc.confidence) as avg_confidence,
-      SUM(jrc.llm_tokens_used) as total_llm_tokens
-    FROM job_root_causes jrc
-    JOIN jobs j ON jrc.job_id = j.job_id
-    JOIN workflow_runs wr ON j.run_id = wr.run_id
-    WHERE wr.repository = $1
-  `, [repository]);
-
-  return result.rows[0];
-}
-
 module.exports = {
   analyzeJob,
   findOrCreateRootCause,
   linkJobToRootCause,
   incrementRootCauseOccurrence,
   getRootCausesForJob,
-  workflowRunExists,
-  getRootCauseStats
+  workflowRunExists
 };
 

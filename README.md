@@ -34,7 +34,7 @@ Currently configured for the `camunda/camunda-7-to-8-data-migrator` repository b
 - **GitHub CLI** (`gh`) installed and authenticated
   The tool only reads workflow run data and job logs - no write permissions needed.
 - **PostgreSQL** (optional)
-  - Required for storing failure history and enabling trend analysis
+  - Required for storing failure history and enabling trend analysis 
 
 ## Installation
 
@@ -87,6 +87,7 @@ node test-db.js
 # Other schema commands
 node schema.js drop    # Drop all tables
 node schema.js reset   # Drop and recreate
+node migratePhase3.js up # Run Phase 3 migrations
 ```
 
 ### Database Schema
@@ -260,7 +261,11 @@ Licensed under Apache License Version 2.0
 
 **Benefits:** Faster debugging, pattern recognition, proactive issue detection
 
+### Important features - resolving limitations
+- [ ] being able to define list of branches to filter workflow runs based on
+
 ### Future Improvements (Nice-to-Have)
+- [ ] **Create detailed HTML reports** - Summarize failures with root causes and links to logs
 - [ ] **YAML configuration** - Move from JSON to YAML to support comments in config files
 - [ ] **Pagination support** - Handle repositories with many workflow runs efficiently
 - [ ] **Filtering options** - Filter jobs by name, status, or time range when querying

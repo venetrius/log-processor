@@ -22,6 +22,8 @@ const { runGhCommand, runCommandToFile } = require('./ghCommand.js')
 const { loadConfig, validateConfig, ensureLogsDirectory, logFileExists } = require('./configLoader.js')
 const db = require('./db.js')
 const repository = require('./repository.js')
+const rootCauseAnalyzer = require('./rootCauseAnalyzer.js')
+const enhancedStats = require('./enhancedStats.js')
 
 const getErrorAnnotations = async jobId => {
     const { repository: orgAndRepo }  = loadConfig();
@@ -121,6 +123,7 @@ const parseJobs = async (jobs, runId, config) => {
                         raw_details: annotation
                     });
                 }
+              await rootCauseAnalyzer.analyzeJob(job.id, errorAnnotations, failedSteps);
             } catch (dbError) {
                 console.error(`   ⚠️  Database error for job ${jobId}:`, dbError.message);
             }
@@ -130,7 +133,14 @@ const parseJobs = async (jobs, runId, config) => {
 
 const loadLogs = async (url, config, runData = null) => {
     const match = url.match(/\/actions\/runs\/(\d+)/);
-    const runId = match ? match[1] : null;  
+    const runId = match ? match[1] : null;
+
+    const exists = await rootCauseAnalyzer.workflowRunExists(runId);
+    if (exists) {
+      console.log(`⏭️  Run ${runId} already processed, skipping...`);
+      return;
+    }
+
     console.log(`\n🔍 Processing run ID: ${runId}`)
 
     // Store workflow run in database if we have the data
@@ -241,7 +251,9 @@ const processAll = async () => {
 
     console.log(`\n✨ Processing complete!`);
 
-    // Display statistics if database is connected
+    // Display statistics if database is connected 
+    // TODO: connect to DB only if stats or persistence is enabled
+    // TODO: move stats display to separate module
     if (dbConnected) {
         try {
             console.log(`\n📊 Database Statistics:`);
@@ -250,6 +262,15 @@ const processAll = async () => {
             console.log(`   Failed runs: ${stats.failed_runs}`);
             console.log(`   Failed jobs: ${stats.failed_jobs}`);
             console.log(`   Error annotations: ${stats.total_error_annotations}`);
+            console.log(`\n🎯 Root Cause Analysis:`);
+            const rcStats = await enhancedStats.getRootCauseStatsDetailed(config.repository);            
+            console.log(`   Jobs analyzed: ${rcStats.jobs_with_root_cause || 0}`);
+            console.log(`   Pattern matched: ${rcStats.pattern_matched || 0}`);
+            console.log(`   Jobs without match: ${rcStats.jobs_without_root_cause || 0}`);
+            console.log(`   Jobs w/ errors (no match): ${rcStats.jobs_with_errors_no_match || 0}`);
+            console.log(`   Total failed jobs: ${rcStats.total_failed_jobs || 0}`);
+            console.log(`   Match rate: ${rcStats.match_rate_percent || 0}%`);
+            console.log(`   Avg confidence: ${parseFloat(rcStats.avg_confidence || 0).toFixed(2)}`);
         } catch (error) {
             console.error('   ⚠️  Could not fetch statistics:', error.message);
         }
