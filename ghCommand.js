@@ -35,18 +35,31 @@ async function runGhCommand(command, skipParse) {
 }
 
 function runCommandToFile(command, outputPath) {
-    return new Promise((resolve, reject) => {
-      const child = exec(command, { maxBuffer: 1024 * 1024 * 50 });
-  
-      const output = fs.createWriteStream(outputPath);
-      child.stdout.pipe(output);
-      child.stderr.pipe(process.stderr);
-  
-      child.on("close", (code) => {
+  return new Promise((resolve, reject) => {
+    const child = exec(command, { maxBuffer: 1024 * 1024 * 50 });
+
+    const output = fs.createWriteStream(outputPath);
+    child.stdout.pipe(output);
+    child.stderr.pipe(process.stderr);
+
+    child.on("error", reject);
+
+    child.on("close", (code) => {
+      output.end(); // ensure stream closes
+      output.on("finish", () => {
+        console.log(`Command finished with code ${code}`);
         if (code === 0) resolve(outputPath);
         else reject(new Error(`Command exited with code ${code}`));
       });
     });
-  }
+  });
+}
 
-module.exports = { runGhCommand, runCommandToFile };
+async function fetchSuitId(runId, repository) {
+  const command = `gh api /repos/${repository}/actions/runs/${runId} --jq .check_suite_id`;
+  const { stdout } = await execAsync(command, { maxBuffer: 1024 * 50 });
+  console.log({stdout})
+  return stdout.trim();
+}
+
+module.exports = { fetchSuitId, runGhCommand, runCommandToFile };

@@ -266,6 +266,9 @@ Licensed under Apache License Version 2.0
 
 ### Important features - resolving limitations
 - [ ] being able to define list of branches to filter workflow runs based on
+- [ ] download is working with a work around - link to download link is printed, improve this
+  - [ ] The also contains the jobId -> 1 less click
+  - [ ] The link are collected and printed out after the run, they are also saved into the db
 
 ### Future Improvements (Nice-to-Have)
 - [ ] **Create detailed HTML reports** - Summarize failures with root causes and links to logs

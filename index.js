@@ -24,6 +24,7 @@ const db = require('./db.js')
 const repository = require('./repository.js')
 const rootCauseAnalyzer = require('./rootCauseAnalyzer.js')
 const enhancedStats = require('./enhancedStats.js')
+const { fetchJobLogs } = require('./manualLogDownload/index')
 
 const getErrorAnnotations = async jobId => {
     const { repository: orgAndRepo }  = loadConfig();
@@ -35,11 +36,13 @@ const getErrorAnnotations = async jobId => {
 
 /**
  * Downloads job log if needed based on configuration
+ * @param {string} runId
  * @param {string} jobId - The job ID
+ * @param {string}  jobName
  * @param {Object} config - Configuration object
  * @returns {string|null} Path to the log file or null if not downloaded
  */
-const downloadJobLog = async (jobId, config) => {
+const downloadJobLog = async (runId, jobId, jobName, config) => {
     if (!config.downloadLogs) {
         console.log(`   ⏭️  Log download disabled\n`);
         return null;
@@ -53,10 +56,17 @@ const downloadJobLog = async (jobId, config) => {
         return logPath;
     }
 
-    const downloadLogCommand = `gh run view --job ${jobId} --log --repo ${config.repository}`;
-    await runCommandToFile(downloadLogCommand, logPath);
-    console.log(`   💾 Saved log to ${logPath}\n`);
-    return logPath;
+
+    console.log(`   ⬇️  Downloading log for job ${jobId}...`);
+    const manualLogPath = await fetchJobLogs(jobId, runId, jobName, config.repository);
+    // TODO would be better to use gh command directly, but it fails with large logs or maybe need more permission?
+    // const downloadLogCommand = `gh run view ${runId} --job ${jobId} --log --repo ${config.repository}`;
+    // console.log(downloadLogCommand)
+    // await runCommandToFile(downloadLogCommand, logPath);
+
+    //  TODO reconsider this - temporary workaround anyway though
+    console.log(manualLogPath ? `   💾 Saved log to ${logPath}\n` : manualLogPath);
+    return manualLogPath;
 }
 
 const parseJobs = async (jobs, runId, config) => {
@@ -81,7 +91,7 @@ const parseJobs = async (jobs, runId, config) => {
             });
 
             // Download log if configured
-            const logPath = await downloadJobLog(jobId, config);
+            const logPath = await downloadJobLog(runId, jobId, job.name, config);
 
             // Store job in database
             try {
