@@ -20,13 +20,13 @@
 
 const { runGhCommand, runCommandToFile } = require('./ghCommand.js')
 const { loadConfig, validateConfig, ensureLogsDirectory, logFileExists } = require('./configLoader.js')
-const db = require('./db.js')
-const repository = require('./repository.js')
+const db = require('./db/db.js')
+const repository = require('./db/repository.js')
 const enhancedStats = require('./enhancedStats.js')
 const rootCauseService = require('./services/rootCauseService')
 const { createLLMClient } = require('./llm/llmClient')
 const { PromptBuilder } = require('./llm/promptBuilder')
-const { fetchJobLogs } = require('./manualLogDownload/index')
+const { fetchJobLogs } = require('./services/manualLogDownload/index')
 
 const getErrorAnnotations = async jobId => {
     const { repository: orgAndRepo }  = loadConfig();

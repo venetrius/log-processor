@@ -16,7 +16,7 @@
  */
 
 const db = require('./db');
-const { PATTERNS } = require('./patternMatcher');
+const { PATTERNS } = require('../patternMatcher');
 
 /**
  * Seeds the root_causes table with predefined patterns

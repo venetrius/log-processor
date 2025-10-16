@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-const db = require('./db');
+const db = require('../../db');
 
 /**
  * Test database connectivity and display connection info

@@ -16,7 +16,7 @@
  */
 
 const fs = require('fs');
-let db = require('../db');
+let db = require('../db/db');
 const { matchPattern } = require('../patternMatcher');
 
 // Response discriminator values

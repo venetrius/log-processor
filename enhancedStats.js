@@ -20,7 +20,7 @@
  * Provides comprehensive statistics including unmatched jobs
  */
 
-const db = require('./db');
+const db = require('./db/db');
 
 /**
  * Get detailed statistics about root cause detection including unmatched jobs

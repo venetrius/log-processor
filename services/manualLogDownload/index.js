@@ -17,11 +17,11 @@
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
-const { fetchSuitId } = require('../ghCommand');
-const db = require("../db");
+const { fetchSuitId } = require('../../ghCommand');
+const db = require("../../db/db");
 
 const TMP_DOWNLOAD_WORKFLOW_DIR = path.resolve(__dirname, './files/tmp/downloaded-logs');
-const FINAL_JOB_DIR = path.resolve(__dirname, '../files');
+const FINAL_JOB_DIR = path.resolve(__dirname, '../../files');
 
 /**
  * Try to find and extract the job log for a given workflow run.
