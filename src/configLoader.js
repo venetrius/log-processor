@@ -43,7 +43,7 @@ const DEFAULT_CONFIG = {
  * @returns {Object} Configuration object
  */
 function loadConfig() {
-  const configPath = path.join(__dirname, 'config.json');
+  const configPath = path.join(__dirname, '../config.json');
   let fileConfig = {};
 
   if (!fs.existsSync(configPath)) {

@@ -20,9 +20,10 @@ const { execSync } = require('child_process');
 const { fetchSuitId } = require('../../ghCommand');
 const db = require("../../db/db");
 
-const TMP_DOWNLOAD_WORKFLOW_DIR = path.resolve(__dirname, './files/tmp/downloaded-logs');
-const FINAL_JOB_DIR = path.resolve(__dirname, '../../files');
-
+const TMP_DOWNLOAD_WORKFLOW_DIR = path.resolve(__dirname, '../../../files/tmp/downloaded-logs');
+const FINAL_JOB_DIR = path.resolve(__dirname, '../../../files');
+console.log('🗂️ Final job log directory:', FINAL_JOB_DIR);
+console.log('🗂️ Temporary download directory:', TMP_DOWNLOAD_WORKFLOW_DIR);
 /**
  * Try to find and extract the job log for a given workflow run.
  * 
