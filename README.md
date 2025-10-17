@@ -264,11 +264,42 @@ Licensed under Apache License Version 2.0
 
 **Benefits:** Faster debugging, pattern recognition, proactive issue detection
 
-### Important features - resolving limitations
+## Intelligent Analysis (Current State)
+Pattern-based detection + optional LLM fallback (mock / prototype). The earlier `rootCauseAnalyzer.js` facade was removed to avoid circular dependencies; logic resides in `services/rootCauseService.js`.
+
+### Current Capabilities
+- Pattern-first matching using regex catalogue
+- LLM fallback with discriminated union response (`root_cause` | `need_more_info`)
+- Confidence threshold enforcement
+- Audit persistence of all LLM outcomes (success, malformed, need_more_info, below_threshold)
+
+### Not Implemented Yet (Planned / Nice-to-Have)
+- Semantic similarity (embeddings + pgvector search) prior to LLM invocation
+- Token/cost usage persistence in a dedicated table (currently only in-memory per response)
+- Structured JSON schema validation beyond discriminator + parse
+- Retry / exponential backoff for OpenAI & Copilot adapters (raw HTTPS only right now)
+- Iterative follow-up handling when LLM returns `need_more_info` (log slice expansion)
+- Decoupled persistence layer (DB helpers currently inside service)
+
+### Near-Term Roadmap
+1. Add semantic search module (embeddings generation + vector indexing).
+2. Persist token metrics & add cost reports.
+3. Introduce response schema validation (lightweight JSON Schema or manual field checks).
+4. Implement adapter-level retry with jitter and clearer error taxonomy.
+5. Support iterative log expansion flow for `need_more_info` responses.
+6. Extract DB helper functions to dedicated persistence utility to reduce coupling.
+7. Add unit tests for `rootCauseService` paths.
+
+## Important features - resolving limitations
 - [ ] being able to define list of branches to filter workflow runs based on
 - [ ] download is working with a work around - link to download link is printed, improve this
   - [ ] The also contains the jobId -> 1 less click
   - [ ] The link are collected and printed out after the run, they are also saved into the db
+- [ ] Persist token/cost metrics (new table) and expose stats
+- [ ] Add response schema validation for LLM outputs
+- [ ] Add retry/backoff for LLM adapters
+- [ ] Implement iterative `need_more_info` follow-up flow
+- [ ] Extract persistence layer from `rootCauseService`
 
 ### Future Improvements (Nice-to-Have)
 - [ ] **Create detailed HTML reports** - Summarize failures with root causes and links to logs
