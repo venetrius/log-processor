@@ -87,6 +87,8 @@ async function analyzeJob(jobId, errorAnnotations, failedSteps, context = {}) {
   const llmStart = Date.now();
   console.log("retrieving log lines for job:", jobId);
   // TODO should be able to download the logs at this point, instead of relying on a path in the DB
+  // TODO should fetch lines in a better way eg.: match `##[error]Process completed with exit code 1.` and get lines
+  // around it
   let logLines = context.logLines || await loadLastLogLines(jobId, 50).catch(() => '');
 
   let messages;
@@ -119,7 +121,7 @@ async function analyzeJob(jobId, errorAnnotations, failedSteps, context = {}) {
   const parsed = parseLLMResponse(rawContent);
   const llmDuration = Date.now() - llmStart;
   console.log(`🤖 LLM analysis completed in ${llmDuration}ms (model: ${model}, tokens: ${tokensMeta.total || 'n/a'})`);
-  console.log({rawContent})
+
   if (!parsed.valid) {
     await recordLLMAnalysis(jobId, {
       detection_method: 'llm_malformed',

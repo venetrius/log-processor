@@ -57,6 +57,16 @@ class PromptBuilder {
       content: this._substitute(template.system, variables)
     };
 
+    if (template.examples) {
+      systemMessage.content += `\n\nHere are some examples:\n${template.examples.join('\n\n')}`;
+    }
+
+    if (template.outputFormat) {
+      systemMessage.content += `\n\nPlease respond in the following format:${JSON.stringify(template.outputFormat)}`;
+    }
+
+
+
     // Build user message from template
     const userMessage = {
       role: 'user',
