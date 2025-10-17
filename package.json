@@ -1,4 +1,11 @@
 {
+  "scripts": {
+    "db:create": "node src/db/schema.js create",
+    "db:drop": "node src/db/schema.js drop",
+    "db:reset": "node src/db/schema.js reset",
+    "db:seed": "node src/db/seedRootCauses.js",
+    "db:init": "npm run db:reset && npm run db:seed"
+  },
   "dependencies": {
     "dotenv": "^17.2.3",
     "pg": "^8.16.3"
