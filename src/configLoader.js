@@ -97,6 +97,13 @@ function validateConfig(config) {
     return false;
   }
 
+  // Validate workflow configurations
+  for (const workflow of config.workflows) {
+    if (workflow.enabled && !workflow.branch) {
+      console.warn(`⚠️  Warning: Workflow "${workflow.name}" has no branch specified, will fetch all branches`);
+    }
+  }
+
   return true;
 }
 

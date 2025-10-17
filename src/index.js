@@ -189,10 +189,21 @@ const loadLogs = async (url, config, runData = null) => {
 
 /**
  * Fetches the last N workflow runs for a specific workflow
+ * @param {string} workflowFileName - The workflow file name (e.g., "ci.yml")
+ * @param {number} count - Number of runs to fetch
+ * @param {Object} config - Configuration object
+ * @param {string|null} branch - Optional branch name to filter runs
+ * @returns {Promise<Array>} Array of workflow runs
  */
-const getWorkflowRuns = async (workflowFileName, count, config) => {
-    console.log(`\n📋 Fetching last ${count} runs for workflow: ${workflowFileName}`)
-    const command = `gh api repos/${config.repository}/actions/workflows/${workflowFileName}/runs?per_page=${count}`;
+const getWorkflowRuns = async (workflowFileName, count, config, branch = null) => {
+    const branchInfo = branch ? ` (branch: ${branch})` : '';
+    console.log(`\n📋 Fetching last ${count} runs for workflow: ${workflowFileName}${branchInfo}`)
+
+    let command = `gh api repos/${config.repository}/actions/workflows/${workflowFileName}/runs?per_page=${count}`;
+    if (branch) {
+        command += `&branch=${branch}`;
+    }
+
     const response = await runGhCommand(command);
     return response.workflow_runs || [];
 }
@@ -286,7 +297,12 @@ const processAll = async () => {
 
         for (const workflow of enabledWorkflows) {
             console.log(`\n📊 Workflow: ${workflow.name}`);
-            const runs = await getWorkflowRuns(workflow.workflowFileName, workflow.fetchLastRuns, config);
+            const runs = await getWorkflowRuns(
+                workflow.workflowFileName,
+                workflow.fetchLastRuns,
+                config,
+                workflow.branch || null
+            );
 
             for (const run of runs) {
                 const url = run.html_url;

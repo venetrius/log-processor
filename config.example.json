@@ -9,7 +9,8 @@
       "name": "CI Pipeline",
       "enabled": true,
       "fetchLastRuns": 5,
-      "workflowFileName": "ci.yml"
+      "workflowFileName": "ci.yml",
+      "branch": "main"
     }
   ],
   "singleRun": {
