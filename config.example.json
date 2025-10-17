@@ -3,6 +3,7 @@
   "downloadLogs": true,
   "forceDownload": false,
   "logsDirectory": "./files",
+  "cacheGHRequests": true,
   "workflows": [
     {
       "name": "CI Pipeline",

@@ -18,12 +18,29 @@
 const util = require('util');
 const { exec } = require('child_process');
 const fs = require("fs");
+const cacheService = require('./services/cacheGHCLI');
+const { loadConfig } = require('./configLoader');
 
 const execAsync = util.promisify(exec);
 
+// Initialize cache based on config
+const config = loadConfig();
+cacheService.setCacheEnabled(config.cacheGHRequests || false);
+
 async function runGhCommand(command, skipParse) {
+  // Check cache first
+  const cached = await cacheService.getCachedResponse(command);
+  if (cached) {
+    return cached.is_json && !skipParse ? JSON.parse(cached.response) : cached.response;
+  }
+
+  // Execute command if not cached
   try {
     const { stdout } = await execAsync(command, { maxBuffer: 1024 * 1024 * 50 });
+
+    // Cache the response
+    await cacheService.setCachedResponse(command, stdout, !skipParse);
+
     if(skipParse) {
         return stdout;
     }
@@ -34,22 +51,43 @@ async function runGhCommand(command, skipParse) {
   }
 }
 
-function runCommandToFile(command, outputPath) {
+async function runCommandToFile(command, outputPath) {
+  // Check cache first
+  const cached = await cacheService.getCachedResponse(command);
+  if (cached) {
+    // Write cached response to file
+    await fs.promises.writeFile(outputPath, cached.response);
+    console.log(`💾 Restored from cache to: ${outputPath}`);
+    return outputPath;
+  }
+
+  // Execute command if not cached
   return new Promise((resolve, reject) => {
     const child = exec(command, { maxBuffer: 1024 * 1024 * 50 });
 
+    let responseData = '';
     const output = fs.createWriteStream(outputPath);
+
+    child.stdout.on('data', (chunk) => {
+      responseData += chunk;
+    });
+
     child.stdout.pipe(output);
     child.stderr.pipe(process.stderr);
 
     child.on("error", reject);
 
-    child.on("close", (code) => {
+    child.on("close", async (code) => {
       output.end(); // ensure stream closes
-      output.on("finish", () => {
+      output.on("finish", async () => {
         console.log(`Command finished with code ${code}`);
-        if (code === 0) resolve(outputPath);
-        else reject(new Error(`Command exited with code ${code}`));
+        if (code === 0) {
+          // Cache the response
+          await cacheService.setCachedResponse(command, responseData, false);
+          resolve(outputPath);
+        } else {
+          reject(new Error(`Command exited with code ${code}`));
+        }
       });
     });
   });
@@ -63,3 +101,4 @@ async function fetchSuitId(runId, repository) {
 }
 
 module.exports = { fetchSuitId, runGhCommand, runCommandToFile };
+

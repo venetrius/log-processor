@@ -7,7 +7,11 @@
     "db:init": "npm run db:reset && npm run db:seed",
     "embeddings:test": "node src/testEmbeddings.js",
     "embeddings:batch": "node src/batchEmbeddings.js",
-    "embeddings:init": "npm run db:init && npm run embeddings:batch"
+    "embeddings:init": "npm run db:init && npm run embeddings:batch",
+    "cache:stats": "node src/cacheManager.js stats",
+    "cache:clear": "node src/cacheManager.js clear",
+    "cache:clear-old": "node src/cacheManager.js clear-old",
+    "cache:export": "node src/cacheManager.js export"
   },
   "dependencies": {
     "@xenova/transformers": "^2.17.2",

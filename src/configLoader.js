@@ -22,6 +22,7 @@ const DEFAULT_CONFIG = {
   downloadLogs: true,
   forceDownload: false,
   logsDirectory: "./files",
+  cacheGHRequests: true,
   workflows: [],
   singleRun: {
     enabled: true,
