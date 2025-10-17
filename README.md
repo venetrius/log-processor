@@ -249,7 +249,6 @@ Licensed under Apache License Version 2.0
 - [ ] **LLM integration for log parsing** - Use AI to analyze failures:
   - Extract root causes from log files
   - Identify patterns across similar failures
-  - Suggest fixes based on historical data
 - [ ] **Pattern-based root cause detection** - Regex patterns for common failures
 - [ ] **Semantic search** - Find similar past failures using embeddings (pgvector)
 
