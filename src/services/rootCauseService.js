@@ -18,6 +18,7 @@
 const fs = require('fs');
 let db = require('../db/db');
 const { matchPattern } = require('../patternMatcher');
+const llmPromptService = require('./llmPromptService');
 
 // Response discriminator values
 const RESPONSE_TYPES = {
@@ -29,7 +30,9 @@ let llmClient = null;
 let promptBuilder = null;
 let serviceOptions = {
   confidenceThreshold: 0.8,
-  enableLLM: true
+  enableLLM: true,
+  enablePromptSemanticSearch: true,
+  promptSemanticSearchThreshold: 0.85
 };
 
 /**
@@ -43,18 +46,17 @@ function initialize({ llmClient: lc, promptBuilder: pb, options = {}, db: dbOver
 }
 
 /**
- * Analyze a job:
- * 1. Pattern match
- * 2. LLM fallback
- * 3. Persist and link
+ * Analyze a job with 3-tier detection:
+ * 1. Pattern matching (instant, free)
+ * 2. Prompt-based semantic search (50-100ms, free)
+ * 3. LLM analysis (2-5s, costs money)
  */
 async function analyzeJob(jobId, errorAnnotations, failedSteps, context = {}) {
   const startOverall = Date.now();
 
-  // 1️⃣ Pattern Matching
+  // 1️⃣ Pattern Matching (Level 1 - Fastest & Free)
   const patternMatch = matchPattern(errorAnnotations, failedSteps);
   if (patternMatch) {
-    // console.debug("✅ Pattern match found:", patternMatch);
     const duration = Date.now() - startOverall;
     const rootCause = await findOrCreateRootCause(patternMatch);
     await linkJobToRootCause(jobId, rootCause.id, {
@@ -64,6 +66,8 @@ async function analyzeJob(jobId, errorAnnotations, failedSteps, context = {}) {
       raw_analysis: JSON.stringify({ patternMatch })
     });
     await incrementRootCauseOccurrence(rootCause.id);
+    await updateLastSeen(rootCause.id);
+
     console.log('is generic failure:', patternMatch.category === 'generic_failure');
     if(patternMatch.category !== 'generic_failure') {
       return {
@@ -74,7 +78,6 @@ async function analyzeJob(jobId, errorAnnotations, failedSteps, context = {}) {
         duration
       };
     }
-
   }
 
   // 2️⃣ LLM disabled?
@@ -83,9 +86,9 @@ async function analyzeJob(jobId, errorAnnotations, failedSteps, context = {}) {
     return { status: 'no_match', method: 'pattern' };
   }
 
-  // 3️⃣ LLM Analysis
+  // 3️⃣ Build LLM prompt context
   const llmStart = Date.now();
-  console.log("retrieving log lines for job:", jobId);
+  console.log("🤖 Preparing for LLM analysis...");
   // TODO should be able to download the logs at this point, instead of relying on a path in the DB
   // TODO should fetch lines in a better way eg.: match `##[error]Process completed with exit code 1.` and get lines
   // around it
@@ -93,7 +96,6 @@ async function analyzeJob(jobId, errorAnnotations, failedSteps, context = {}) {
 
   let messages;
   try {
-    console.log("🤖 Invoking LLM for root cause analysis...");
     messages = promptBuilder.build('rootCauseAnalysis', {
       jobName: context.jobName || 'Unknown Job',
       workflowName: context.workflowName || 'Unknown Workflow',
@@ -102,10 +104,140 @@ async function analyzeJob(jobId, errorAnnotations, failedSteps, context = {}) {
       failedSteps: (failedSteps || []).map(s => simplifyStep(s)),
       logLines
     });
-    console.log(`   Messages: ${JSON.stringify(messages)}`);
   } catch (err) {
     return { status: 'llm_failure', method: 'llm', error: `Prompt build failed: ${err.message}` };
   }
+
+  // 4️⃣ Prompt-Based Semantic Search (Level 2 - Before LLM call)
+  if (serviceOptions.enablePromptSemanticSearch) {
+    console.log("🔍 Checking for similar historical prompts...");
+
+    try {
+      // Save prompt and check for exact hash match or generate embedding
+      const promptInfo = await llmPromptService.savePrompt({
+        messages,
+        jobId,
+        errorAnnotations,
+        failedSteps,
+        context: { ...context, logLines }
+      });
+
+      // Check for exact hash match (instant cache hit)
+      if (promptInfo.cached) {
+        console.log(`💾 Exact prompt match found - reusing cached result!`);
+
+        if (promptInfo.rootCauseId) {
+          const rootCause = await getRootCauseById(promptInfo.rootCauseId);
+
+          await linkJobToRootCause(jobId, promptInfo.rootCauseId, {
+            confidence: promptInfo.confidence,
+            detection_method: 'prompt_cache_exact',
+            analysis_duration_ms: Date.now() - llmStart,
+            raw_analysis: `Cached from prompt ${promptInfo.promptId}`
+          });
+          await incrementRootCauseOccurrence(promptInfo.rootCauseId);
+          await updateLastSeen(promptInfo.rootCauseId);
+
+          return {
+            status: 'prompt_cache_success',
+            method: 'prompt_cache_exact',
+            rootCause,
+            confidence: promptInfo.confidence,
+            duration: Date.now() - llmStart,
+            promptId: promptInfo.promptId
+          };
+        }
+      }
+
+      // Search for similar prompts using semantic search
+      const similarPrompts = await llmPromptService.findSimilarPrompts(
+        promptInfo.embedding,
+        serviceOptions.promptSemanticSearchThreshold,
+        5
+      );
+
+      if (similarPrompts.length > 0) {
+        const topMatch = similarPrompts[0];
+        const semanticDuration = Date.now() - llmStart;
+
+        console.log(`✅ Similar prompt found: "${topMatch.root_cause_title}" (similarity: ${topMatch.similarity.toFixed(3)})`);
+        console.log(`   Reused ${topMatch.reused_count} times before`);
+
+        // Decision: High confidence or needs LLM validation?
+        const shouldUseSemantic = (
+          topMatch.similarity >= 0.90 ||                    // Very high similarity
+          topMatch.reused_count >= 3 ||                     // Proven reliable
+          topMatch.discovery_method === 'pattern'           // Pattern-based root causes are reliable
+        );
+
+        if (shouldUseSemantic) {
+          console.log(`   ✅ High confidence - using semantic match`);
+
+          await llmPromptService.markPromptAsReused(topMatch.prompt_id);
+
+          await linkJobToRootCause(jobId, topMatch.root_cause_id, {
+            confidence: topMatch.similarity,
+            detection_method: 'prompt_semantic_search',
+            analysis_duration_ms: semanticDuration,
+            raw_analysis: JSON.stringify({
+              promptId: promptInfo.promptId,
+              matchedPromptId: topMatch.prompt_id,
+              similarity: topMatch.similarity,
+              reusedCount: topMatch.reused_count
+            })
+          });
+          await incrementRootCauseOccurrence(topMatch.root_cause_id);
+          await updateLastSeen(topMatch.root_cause_id);
+
+          // Update our prompt with the reused root cause
+          await llmPromptService.updatePromptWithResponse(promptInfo.promptId, {
+            llmModel: 'semantic-reuse',
+            llmResponse: `Reused from prompt ${topMatch.prompt_id}`,
+            llmTokens: 0,
+            llmDuration: semanticDuration,
+            rootCauseId: topMatch.root_cause_id,
+            confidence: topMatch.similarity
+          });
+
+          return {
+            status: 'prompt_semantic_success',
+            method: 'prompt_semantic_search',
+            rootCause: {
+              id: topMatch.root_cause_id,
+              title: topMatch.root_cause_title,
+              description: topMatch.root_cause_description,
+              suggested_fix: topMatch.suggested_fix,
+              category: topMatch.category
+            },
+            confidence: topMatch.similarity,
+            duration: semanticDuration,
+            promptId: promptInfo.promptId,
+            matchedPromptId: topMatch.prompt_id
+          };
+        } else {
+          console.log(`   ⚠️ Medium confidence (${topMatch.similarity.toFixed(3)}) - will validate with LLM`);
+          // Continue to LLM with hint
+          context.semanticSuggestion = {
+            title: topMatch.root_cause_title,
+            confidence: topMatch.similarity,
+            reusedCount: topMatch.reused_count
+          };
+        }
+      } else {
+        console.log(`   ⚠️ No similar prompts found (threshold: ${serviceOptions.promptSemanticSearchThreshold})`);
+      }
+
+      // Store promptId for later update after LLM response
+      context.promptId = promptInfo.promptId;
+
+    } catch (error) {
+      console.error('❌ Prompt semantic search failed:', error.message);
+      // Continue to LLM fallback
+    }
+  }
+
+  // 5️⃣ LLM Analysis (Level 3 - Most Expensive)
+  console.log("🤖 Invoking LLM for root cause analysis...");
 
   let rawContent, tokensMeta, model, provider;
   try {
@@ -121,7 +253,7 @@ async function analyzeJob(jobId, errorAnnotations, failedSteps, context = {}) {
   const parsed = parseLLMResponse(rawContent);
   const llmDuration = Date.now() - llmStart;
   console.log(`🤖 LLM analysis completed in ${llmDuration}ms (model: ${model}, tokens: ${tokensMeta.total || 'n/a'})`);
-
+  console.debug(JSON.stringify(parsed));
   if (!parsed.valid) {
     await recordLLMAnalysis(jobId, {
       detection_method: 'llm_malformed',
@@ -169,7 +301,8 @@ async function analyzeJob(jobId, errorAnnotations, failedSteps, context = {}) {
     title: rc.title?.slice(0, 255) || 'LLM Root Cause',
     description: rc.description || rc.reasoning || null,
     suggestedFix: rc.suggested_fix || null,
-    confidence
+    confidence,
+    discoveryMethod: 'llm'
   });
 
   await linkJobToRootCause(jobId, rootCause.id, {
@@ -181,6 +314,19 @@ async function analyzeJob(jobId, errorAnnotations, failedSteps, context = {}) {
     raw_analysis: rawContent
   });
   await incrementRootCauseOccurrence(rootCause.id);
+  await updateLastSeen(rootCause.id);
+
+  // Update prompt with LLM response
+  if (context.promptId) {
+    await llmPromptService.updatePromptWithResponse(context.promptId, {
+      llmModel: model || provider || 'unknown',
+      llmResponse: rawContent,
+      llmTokens: tokensMeta?.total || null,
+      llmDuration: llmDuration,
+      rootCauseId: rootCause.id,
+      confidence: confidence
+    });
+  }
 
   return { status: 'llm_success', method: 'llm', rootCause, confidence, duration: llmDuration };
 }
@@ -203,14 +349,11 @@ function parseLLMResponse(raw) {
 
 async function loadLastLogLines(jobId, lineCount) {
   const result = await db.query('SELECT log_file_path FROM jobs WHERE job_id = $1', [jobId]);
-  console.log('Log file path query result:', result.rows);
   if (result.rows.length === 0) return '';
   const filePath = result.rows[0].log_file_path;
-  console.log("Loading log file:", filePath);
   if (!filePath || !fs.existsSync(filePath)) return '';
   const content = fs.readFileSync(filePath, 'utf8');
   const lines = content.split(/\r?\n/);
-  console.log(`Log file has ${lines.length} lines, returning last ${lineCount}`);
   return lines.slice(-lineCount).join('\n');
 }
 
@@ -224,6 +367,11 @@ function simplifyStep(s) {
 
 /* ---------- Persistence helpers ---------- */
 
+async function getRootCauseById(rootCauseId) {
+  const result = await db.query('SELECT * FROM root_causes WHERE id = $1', [rootCauseId]);
+  return result.rows.length > 0 ? result.rows[0] : null;
+}
+
 async function findOrCreateRootCause(patternMatch) {
   const existing = await db.query(
     'SELECT * FROM root_causes WHERE category = $1 AND title = $2 LIMIT 1',
@@ -232,15 +380,16 @@ async function findOrCreateRootCause(patternMatch) {
   if (existing.rows.length > 0) return existing.rows[0];
 
   const result = await db.query(
-    `INSERT INTO root_causes (category, title, description, suggested_fix, confidence_threshold)
-     VALUES ($1, $2, $3, $4, $5)
+    `INSERT INTO root_causes (category, title, description, suggested_fix, confidence_threshold, discovery_method)
+     VALUES ($1, $2, $3, $4, $5, $6)
      RETURNING *`,
     [
       patternMatch.category,
       patternMatch.title,
       patternMatch.description,
       patternMatch.suggestedFix,
-      patternMatch.confidence
+      patternMatch.confidence,
+      patternMatch.discoveryMethod || 'pattern'
     ]
   );
   return result.rows[0];
@@ -270,6 +419,15 @@ async function incrementRootCauseOccurrence(rootCauseId) {
     `UPDATE root_causes 
      SET occurrence_count = occurrence_count + 1,
          updated_at = CURRENT_TIMESTAMP
+     WHERE id = $1`,
+    [rootCauseId]
+  );
+}
+
+async function updateLastSeen(rootCauseId) {
+  await db.query(
+    `UPDATE root_causes 
+     SET last_seen_at = CURRENT_TIMESTAMP
      WHERE id = $1`,
     [rootCauseId]
   );
@@ -309,3 +467,4 @@ module.exports = {
   workflowRunExists,
   _setDb(newDb) { db = newDb; }
 };
+
