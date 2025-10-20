@@ -43,6 +43,7 @@ async function createSchema() {
         workflow_name VARCHAR(255),
         workflow_file_name VARCHAR(255),
         repository VARCHAR(255) NOT NULL,
+        head_branch VARCHAR(255),
         status VARCHAR(50),
         conclusion VARCHAR(50),
         html_url TEXT,
@@ -171,8 +172,12 @@ async function createSchema() {
       ON workflow_runs(repository);
     `);
     await db.query(`
-      CREATE INDEX IF NOT EXISTS idx_workflow_runs_conclusion 
+      CREATE INDEX IF NOT EXISTS idx_workflow_runs_conclusion
       ON workflow_runs(conclusion);
+    `);
+    await db.query(`
+      CREATE INDEX IF NOT EXISTS idx_workflow_runs_branch 
+      ON workflow_runs(head_branch);
     `);
     await db.query(`
       CREATE INDEX IF NOT EXISTS idx_error_annotations_job_id 

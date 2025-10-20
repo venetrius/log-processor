@@ -170,6 +170,7 @@ const loadLogs = async (url, config, runData = null) => {
                 workflow_name: runData.name,
                 workflow_file_name: runData.path,
                 repository: config.repository,
+                head_branch: runData.head_branch,
                 status: runData.status,
                 conclusion: runData.conclusion,
                 html_url: runData.html_url,
@@ -203,7 +204,8 @@ const getWorkflowRuns = async (workflowFileName, count, config, branch = null) =
     if (branch) {
         command += `&branch=${branch}`;
     }
-
+    console.log(`command
+    : ${command}`)
     const response = await runGhCommand(command);
     return response.workflow_runs || [];
 }
@@ -313,6 +315,7 @@ const processAll = async () => {
                     await loadLogs(url, config, run);
                 } else {
                     console.log(`  ✅ Run succeeded, skipping`);
+                    await repository.upsertWorkflowRunWithoutFailures(run);
                 }
             }
         }

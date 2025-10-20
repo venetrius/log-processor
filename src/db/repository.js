@@ -20,21 +20,18 @@ const db = require('./db');
  * Repository for database operations
  */
 
-/**
- * Inserts or updates a workflow run
- * @param {Object} runData - Workflow run data
- * @returns {Promise<Object>} Inserted/updated run
- */
-async function upsertWorkflowRun(runData) {
+
+async function upsertWorkflowRunWithoutFailures(runData) {
   const query = `
     INSERT INTO workflow_runs (
       run_id, run_number, workflow_name, workflow_file_name,
-      repository, status, conclusion, html_url, created_at, updated_at
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      repository, head_branch, status, conclusion, html_url, created_at, updated_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
     ON CONFLICT (run_id) 
     DO UPDATE SET
       status = EXCLUDED.status,
       conclusion = EXCLUDED.conclusion,
+      head_branch = EXCLUDED.head_branch,
       updated_at = EXCLUDED.updated_at,
       fetched_at = CURRENT_TIMESTAMP
     RETURNING *;
@@ -46,6 +43,46 @@ async function upsertWorkflowRun(runData) {
     runData.name || runData.workflow_name,
     runData.path || runData.workflow_file_name,
     runData.repository?.full_name || runData.repository,
+    runData.head_branch || null,
+    runData.status,
+    runData.conclusion,
+    runData.html_url,
+    runData.created_at,
+    runData.updated_at
+  ];
+
+  const result = await db.query(query, values);
+  return result.rows[0];
+}
+
+/**
+ * Inserts or updates a workflow run
+ * @param {Object} runData - Workflow run data
+ * @returns {Promise<Object>} Inserted/updated run
+ */
+async function upsertWorkflowRun(runData) {
+  const query = `
+    INSERT INTO workflow_runs (
+      run_id, run_number, workflow_name, workflow_file_name,
+      repository, head_branch, status, conclusion, html_url, created_at, updated_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+    ON CONFLICT (run_id) 
+    DO UPDATE SET
+      status = EXCLUDED.status,
+      conclusion = EXCLUDED.conclusion,
+      head_branch = EXCLUDED.head_branch,
+      updated_at = EXCLUDED.updated_at,
+      fetched_at = CURRENT_TIMESTAMP
+    RETURNING *;
+  `;
+
+  const values = [
+    runData.id,
+    runData.run_number,
+    runData.name || runData.workflow_name,
+    runData.path || runData.workflow_file_name,
+    runData.repository?.full_name || runData.repository,
+    runData.head_branch || null,
     runData.status,
     runData.conclusion,
     runData.html_url,
@@ -72,7 +109,7 @@ async function upsertJob(jobData) {
     DO UPDATE SET
       status = EXCLUDED.status,
       conclusion = EXCLUDED.conclusion,
-      completed_at = EXCLUDED.completed_at,
+      head_branch = EXCLUDED.head_branch,      completed_at = EXCLUDED.completed_at,
       log_file_path = EXCLUDED.log_file_path,
       fetched_at = CURRENT_TIMESTAMP
     RETURNING *;
@@ -249,6 +286,7 @@ module.exports = {
   getFailedJobs,
   getErrorAnnotationsForJob,
   getFailureStats,
-  getTopFailingJobs
+  getTopFailingJobs,
+  upsertWorkflowRunWithoutFailures
 };
 
