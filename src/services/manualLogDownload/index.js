@@ -26,7 +26,7 @@ console.log('🗂️ Final job log directory:', FINAL_JOB_DIR);
 console.log('🗂️ Temporary download directory:', TMP_DOWNLOAD_WORKFLOW_DIR);
 /**
  * Try to find and extract the job log for a given workflow run.
- * 
+ *
  * - Looks for ~/Downloads/logs_<runId>.zip
  * - Extracts it into TMP_DOWNLOAD_WORKFLOW_DIR/logs_<runId>
  * - Finds the job log by its name (runName)
@@ -66,15 +66,31 @@ async function fetchJobLogs(jobId, runId, runName, repository) {
   // 4️⃣ Find the job log by name
   console.debug(`🔍 Looking for job "${runName}" in ${extractPath}`);
   const jobFiles = fs.readdirSync(extractPath);
-  const matchingFile = jobFiles.find((f) => f.includes(runName));
 
-  if (!matchingFile) {
+  // GitHub Actions replaces "/" with " _ " (space-underscore-space) in log filenames
+  const normalizedRunName = runName.replace(/\//g, ' _ ');
+
+  // Find matching files (could be multiple if there are numbered prefixes)
+  const matchingFiles = jobFiles.filter((f) => {
+    // Remove the numbered prefix (e.g., "7_") and .txt extension for comparison
+    const normalizedFileName = f.replace(/^\d+_/, '').replace(/\.txt$/, '');
+    return normalizedFileName === normalizedRunName;
+  });
+
+  if (matchingFiles.length === 0) {
     console.debug(`❌ No log file found for job "${runName}"`);
+    console.debug(`   Normalized search: "${normalizedRunName}"`);
+    console.debug(`   Available files: ${jobFiles.filter(f => f.endsWith('.txt')).join(', ')}`);
     return null;
   }
-  // TODO what if multiple match?
+
+  if (matchingFiles.length > 1) {
+    console.warn(`⚠️  Multiple log files found for job "${runName}": ${matchingFiles.join(', ')}`);
+    console.warn(`   Using first match: ${matchingFiles[0]}`);
+  }
+
   // 5️⃣ Copy the job log
-  const jobSourcePath = path.join(extractPath, matchingFile);
+  const jobSourcePath = path.join(extractPath, matchingFiles[0]);
   fs.copyFileSync(jobSourcePath, finalJobLogPath);
 
   console.debug(`✅ Job log copied to: ${finalJobLogPath}`);
@@ -84,3 +100,4 @@ async function fetchJobLogs(jobId, runId, runName, repository) {
 module.exports = {
   fetchJobLogs
 };
+
