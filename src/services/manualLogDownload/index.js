@@ -65,10 +65,13 @@ async function fetchJobLogs(jobId, runId, runName, repository) {
 
   // 4️⃣ Find the job log by name
   console.debug(`🔍 Looking for job "${runName}" in ${extractPath}`);
-  const jobFiles = fs.readdirSync(extractPath);
+  const dirents = fs.readdirSync(extractPath, { withFileTypes: true });
+  const jobFiles = dirents
+    .filter(dirent => dirent.isFile())
+    .map(dirent => dirent.name);
 
   // GitHub Actions replaces "/" with " _ " (space-underscore-space) in log filenames
-  const normalizedRunName = runName.replace(/\//g, ' _ ');
+  const normalizedRunName = runName.replace(/\//g, '_');
 
   // Find matching files (could be multiple if there are numbered prefixes)
   const matchingFiles = jobFiles.filter((f) => {
