@@ -36,7 +36,7 @@ const {
  * @returns {string} HTML content
  */
 function generateHTML(data, options = {}) {
-  const { summary, topRootCauses, workflowData, stepFailures } = data;
+  const { summary, topRootCauses, workflowData, stepFailures, jobsWithoutRootCause } = data;
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -51,6 +51,7 @@ function generateHTML(data, options = {}) {
     ${buildHeader(options)}
     ${buildExecutiveSummary(summary)}
     ${buildTopRootCauses(topRootCauses)}
+    ${buildJobsWithoutRootCause(jobsWithoutRootCause)}
     ${buildWorkflowBreakdown(workflowData, stepFailures, options)}
     ${buildFooter()}
   </div>
@@ -490,6 +491,70 @@ function buildTopRootCauses(rootCauses) {
           <th>Affected Jobs</th>
           <th>Avg Confidence</th>
           <th>Suggested Fix</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows}
+      </tbody>
+    </table>
+  `;
+}
+
+/**
+ * Build jobs without root cause section
+ * @param {Array} jobs - Jobs without identified root causes
+ * @returns {string} HTML content
+ */
+function buildJobsWithoutRootCause(jobs) {
+  if (!jobs || jobs.length === 0) {
+    return ''; // Don't show section if no jobs without root causes
+  }
+
+  const rows = jobs.map((job) => {
+    const jobUrl = job.html_url || '#';
+    const runUrl = job.run_html_url || '#';
+    const failedStep = job.failed_step_name
+      ? `${escapeHtml(job.failed_step_name)} (#${job.failed_step_number})`
+      : 'N/A';
+
+    return `
+      <tr>
+        <td><a href="${escapeHtml(jobUrl)}" target="_blank">${job.job_id}</a></td>
+        <td><strong>${escapeHtml(job.job_name)}</strong></td>
+        <td>${failedStep}</td>
+        <td>
+          <a href="${escapeHtml(runUrl)}" target="_blank">
+            ${escapeHtml(job.workflow_name)} #${job.run_number}
+          </a>
+          <br>
+          <small style="color: #7f8c8d;">${escapeHtml(job.head_branch || 'unknown branch')}</small>
+        </td>
+        <td>${formatDateTime(new Date(job.run_created_at))}</td>
+      </tr>
+    `;
+  }).join('');
+
+  return `
+    <h2>⚠️ Jobs Without Identified Root Cause</h2>
+    <div style="background: #fff3cd; border: 1px solid #ffc107; padding: 15px; margin-bottom: 20px; border-radius: 5px;">
+      <strong>⚠️ Warning:</strong> The following ${jobs.length} failed job${jobs.length > 1 ? 's' : ''} 
+      ${jobs.length > 1 ? 'have' : 'has'} no identified root cause. 
+      This may indicate that:
+      <ul style="margin: 10px 0 0 20px;">
+        <li>The failure pattern is not yet recognized by the system</li>
+        <li>The LLM analysis was unable to determine a root cause</li>
+        <li>The failure logs don't contain enough diagnostic information</li>
+      </ul>
+      These failures require manual investigation.
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th>Job ID</th>
+          <th>Job Name</th>
+          <th>Failed Step</th>
+          <th>Workflow Run</th>
+          <th>Date</th>
         </tr>
       </thead>
       <tbody>

@@ -109,11 +109,12 @@ async function aggregateData(config) {
   };
 
   // Fetch all data in parallel
-  const [summary, topRootCauses, workflowData, stepFailures] = await Promise.all([
+  const [summary, topRootCauses, workflowData, stepFailures, jobsWithoutRootCause] = await Promise.all([
     dataAggregator.getExecutiveSummary(filterOptions),
     dataAggregator.getTopRootCauses(filterOptions, 10),
     dataAggregator.getWorkflowBranchData(filterOptions),
     dataAggregator.getStepFailureSummary(filterOptions),
+    dataAggregator.getJobsWithoutRootCause(filterOptions),
   ]);
 
   return {
@@ -121,6 +122,7 @@ async function aggregateData(config) {
     topRootCauses,
     workflowData,
     stepFailures,
+    jobsWithoutRootCause,
   };
 }
 
