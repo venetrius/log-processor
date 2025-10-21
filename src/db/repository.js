@@ -27,7 +27,7 @@ async function upsertWorkflowRunWithoutFailures(runData) {
       run_id, run_number, workflow_name, workflow_file_name,
       repository, head_branch, status, conclusion, html_url, created_at, updated_at
     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-    ON CONFLICT (run_id) 
+    ON CONFLICT (run_id)
     DO UPDATE SET
       status = EXCLUDED.status,
       conclusion = EXCLUDED.conclusion,
@@ -66,7 +66,7 @@ async function upsertWorkflowRun(runData) {
       run_id, run_number, workflow_name, workflow_file_name,
       repository, head_branch, status, conclusion, html_url, created_at, updated_at
     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-    ON CONFLICT (run_id) 
+    ON CONFLICT (run_id)
     DO UPDATE SET
       status = EXCLUDED.status,
       conclusion = EXCLUDED.conclusion,
@@ -103,14 +103,15 @@ async function upsertJob(jobData) {
   const query = `
     INSERT INTO jobs (
       job_id, run_id, job_name, status, conclusion,
-      started_at, completed_at, html_url, log_file_path
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      started_at, completed_at, html_url, log_file_path, logs_accessible
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
     ON CONFLICT (job_id)
     DO UPDATE SET
       status = EXCLUDED.status,
       conclusion = EXCLUDED.conclusion,
-      head_branch = EXCLUDED.head_branch,      completed_at = EXCLUDED.completed_at,
+      completed_at = EXCLUDED.completed_at,
       log_file_path = EXCLUDED.log_file_path,
+      logs_accessible = EXCLUDED.logs_accessible,
       fetched_at = CURRENT_TIMESTAMP
     RETURNING *;
   `;
@@ -124,7 +125,8 @@ async function upsertJob(jobData) {
     jobData.started_at,
     jobData.completed_at,
     jobData.html_url,
-    jobData.log_file_path || null
+    jobData.log_file_path || null,
+    jobData.logs_accessible !== undefined ? jobData.logs_accessible : false
   ];
 
   const result = await db.query(query, values);
@@ -197,7 +199,7 @@ async function insertErrorAnnotation(annotationData) {
  */
 async function getFailedJobs(repository, limit = 50) {
   const query = `
-    SELECT 
+    SELECT
       j.*,
       wr.workflow_name,
       wr.run_number,
@@ -237,7 +239,7 @@ async function getErrorAnnotationsForJob(jobId) {
  */
 async function getFailureStats(repository) {
   const query = `
-    SELECT 
+    SELECT
       COUNT(DISTINCT wr.run_id) as total_runs,
       COUNT(DISTINCT CASE WHEN wr.conclusion = 'failure' THEN wr.run_id END) as failed_runs,
       COUNT(DISTINCT j.job_id) as total_jobs,
@@ -261,7 +263,7 @@ async function getFailureStats(repository) {
  */
 async function getTopFailingJobs(repository, limit = 10) {
   const query = `
-    SELECT 
+    SELECT
       j.job_name,
       COUNT(*) as failure_count,
       MAX(j.completed_at) as last_failure

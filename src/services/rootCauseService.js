@@ -129,106 +129,119 @@ async function analyzeJob(jobId, errorAnnotations, failedSteps, context = {}) {
         if (promptInfo.rootCauseId) {
           const rootCause = await getRootCauseById(promptInfo.rootCauseId);
 
-          await linkJobToRootCause(jobId, promptInfo.rootCauseId, {
-            confidence: promptInfo.confidence,
-            detection_method: 'prompt_cache_exact',
-            analysis_duration_ms: Date.now() - llmStart,
-            raw_analysis: `Cached from prompt ${promptInfo.promptId}`
-          });
-          await incrementRootCauseOccurrence(promptInfo.rootCauseId);
-          await updateLastSeen(promptInfo.rootCauseId);
+          // Check if root cause still exists (might be deleted after DB reset)
+          if (!rootCause) {
+            console.log(`   ⚠️ Cached root cause (ID: ${promptInfo.rootCauseId}) no longer exists - retrying with LLM`);
+            context.promptId = promptInfo.promptId;
+            // Skip semantic search and go straight to LLM retry
+          } else {
+            // Root cause exists - use cached result
+            await linkJobToRootCause(jobId, promptInfo.rootCauseId, {
+              confidence: promptInfo.confidence,
+              detection_method: 'prompt_cache_exact',
+              analysis_duration_ms: Date.now() - llmStart,
+              raw_analysis: `Cached from prompt ${promptInfo.promptId}`
+            });
+            await incrementRootCauseOccurrence(promptInfo.rootCauseId);
+            await updateLastSeen(promptInfo.rootCauseId);
 
-          return {
-            status: 'prompt_cache_success',
-            method: 'prompt_cache_exact',
-            rootCause,
-            confidence: promptInfo.confidence,
-            duration: Date.now() - llmStart,
-            promptId: promptInfo.promptId
-          };
-        }
-      }
-
-      // Search for similar prompts using semantic search
-      const similarPrompts = await llmPromptService.findSimilarPrompts(
-        promptInfo.embedding,
-        serviceOptions.promptSemanticSearchThreshold,
-        5
-      );
-
-      if (similarPrompts.length > 0) {
-        const topMatch = similarPrompts[0];
-        const semanticDuration = Date.now() - llmStart;
-
-        console.log(`✅ Similar prompt found: "${topMatch.root_cause_title}" (similarity: ${topMatch.similarity.toFixed(3)})`);
-        console.log(`   Reused ${topMatch.reused_count} times before`);
-
-        // Decision: High confidence or needs LLM validation?
-        const shouldUseSemantic = (
-          topMatch.similarity >= 0.90 ||                    // Very high similarity
-          topMatch.reused_count >= 3 ||                     // Proven reliable
-          topMatch.discovery_method === 'pattern'           // Pattern-based root causes are reliable
-        );
-
-        if (shouldUseSemantic) {
-          console.log(`   ✅ High confidence - using semantic match`);
-
-          await llmPromptService.markPromptAsReused(topMatch.prompt_id);
-
-          await linkJobToRootCause(jobId, topMatch.root_cause_id, {
-            confidence: topMatch.similarity,
-            detection_method: 'prompt_semantic_search',
-            analysis_duration_ms: semanticDuration,
-            raw_analysis: JSON.stringify({
-              promptId: promptInfo.promptId,
-              matchedPromptId: topMatch.prompt_id,
-              similarity: topMatch.similarity,
-              reusedCount: topMatch.reused_count
-            })
-          });
-          await incrementRootCauseOccurrence(topMatch.root_cause_id);
-          await updateLastSeen(topMatch.root_cause_id);
-
-          // Update our prompt with the reused root cause
-          await llmPromptService.updatePromptWithResponse(promptInfo.promptId, {
-            llmModel: 'semantic-reuse',
-            llmResponse: `Reused from prompt ${topMatch.prompt_id}`,
-            llmTokens: 0,
-            llmDuration: semanticDuration,
-            rootCauseId: topMatch.root_cause_id,
-            confidence: topMatch.similarity
-          });
-
-          return {
-            status: 'prompt_semantic_success',
-            method: 'prompt_semantic_search',
-            rootCause: {
-              id: topMatch.root_cause_id,
-              title: topMatch.root_cause_title,
-              description: topMatch.root_cause_description,
-              suggested_fix: topMatch.suggested_fix,
-              category: topMatch.category
-            },
-            confidence: topMatch.similarity,
-            duration: semanticDuration,
-            promptId: promptInfo.promptId,
-            matchedPromptId: topMatch.prompt_id
-          };
+            return {
+              status: 'prompt_cache_success',
+              method: 'prompt_cache_exact',
+              rootCause,
+              confidence: promptInfo.confidence,
+              duration: Date.now() - llmStart,
+              promptId: promptInfo.promptId
+            };
+          }
         } else {
-          console.log(`   ⚠️ Medium confidence (${topMatch.similarity.toFixed(3)}) - will validate with LLM`);
-          // Continue to LLM with hint
-          context.semanticSuggestion = {
-            title: topMatch.root_cause_title,
-            confidence: topMatch.similarity,
-            reusedCount: topMatch.reused_count
-          };
+          // Cached result has no root cause - skip semantic search and retry with LLM
+          console.log(`   ⚠️ Cached result has no root cause - retrying with LLM`);
+          context.promptId = promptInfo.promptId;
+          // Skip semantic search - go straight to LLM analysis
         }
       } else {
-        console.log(`   ⚠️ No similar prompts found (threshold: ${serviceOptions.promptSemanticSearchThreshold})`);
-      }
+        // No exact cache hit - try semantic search
+        const similarPrompts = await llmPromptService.findSimilarPrompts(
+          promptInfo.embedding,
+          serviceOptions.promptSemanticSearchThreshold,
+          5
+        );
 
-      // Store promptId for later update after LLM response
-      context.promptId = promptInfo.promptId;
+        if (similarPrompts.length > 0) {
+          const topMatch = similarPrompts[0];
+          const semanticDuration = Date.now() - llmStart;
+
+          console.log(`✅ Similar prompt found: "${topMatch.root_cause_title}" (similarity: ${topMatch.similarity.toFixed(3)})`);
+          console.log(`   Reused ${topMatch.reused_count} times before`);
+
+          // Decision: High confidence or needs LLM validation?
+          const shouldUseSemantic = (
+            topMatch.similarity >= 0.90 ||                    // Very high similarity
+            topMatch.reused_count >= 3 ||                     // Proven reliable
+            topMatch.discovery_method === 'pattern'           // Pattern-based root causes are reliable
+          );
+
+          if (shouldUseSemantic) {
+            console.log(`   ✅ High confidence - using semantic match`);
+
+            await llmPromptService.markPromptAsReused(topMatch.prompt_id);
+
+            await linkJobToRootCause(jobId, topMatch.root_cause_id, {
+              confidence: topMatch.similarity,
+              detection_method: 'prompt_semantic_search',
+              analysis_duration_ms: semanticDuration,
+              raw_analysis: JSON.stringify({
+                promptId: promptInfo.promptId,
+                matchedPromptId: topMatch.prompt_id,
+                similarity: topMatch.similarity,
+                reusedCount: topMatch.reused_count
+              })
+            });
+            await incrementRootCauseOccurrence(topMatch.root_cause_id);
+            await updateLastSeen(topMatch.root_cause_id);
+
+            // Update our prompt with the reused root cause
+            await llmPromptService.updatePromptWithResponse(promptInfo.promptId, {
+              llmModel: 'semantic-reuse',
+              llmResponse: `Reused from prompt ${topMatch.prompt_id}`,
+              llmTokens: 0,
+              llmDuration: semanticDuration,
+              rootCauseId: topMatch.root_cause_id,
+              confidence: topMatch.similarity
+            });
+
+            return {
+              status: 'prompt_semantic_success',
+              method: 'prompt_semantic_search',
+              rootCause: {
+                id: topMatch.root_cause_id,
+                title: topMatch.root_cause_title,
+                description: topMatch.root_cause_description,
+                suggested_fix: topMatch.suggested_fix,
+                category: topMatch.category
+              },
+              confidence: topMatch.similarity,
+              duration: semanticDuration,
+              promptId: promptInfo.promptId,
+              matchedPromptId: topMatch.prompt_id
+            };
+          } else {
+            console.log(`   ⚠️ Medium confidence (${topMatch.similarity.toFixed(3)}) - will validate with LLM`);
+            // Continue to LLM with hint
+            context.semanticSuggestion = {
+              title: topMatch.root_cause_title,
+              confidence: topMatch.similarity,
+              reusedCount: topMatch.reused_count
+            };
+          }
+        } else {
+          console.log(`   ⚠️ No similar prompts found (threshold: ${serviceOptions.promptSemanticSearchThreshold})`);
+        }
+
+        // Store promptId for later update after LLM response
+        context.promptId = promptInfo.promptId;
+      }
 
     } catch (error) {
       console.error('❌ Prompt semantic search failed:', error.message);
@@ -396,6 +409,9 @@ async function findOrCreateRootCause(patternMatch) {
 }
 
 async function linkJobToRootCause(jobId, rootCauseId, options) {
+  if (rootCauseId == null) {
+    return null;
+  }
   await db.query(
     `INSERT INTO job_root_causes (
       job_id, root_cause_id, confidence, detection_method,
@@ -415,6 +431,9 @@ async function linkJobToRootCause(jobId, rootCauseId, options) {
 }
 
 async function incrementRootCauseOccurrence(rootCauseId) {
+  if (rootCauseId == null) {
+    return null;
+  }
   await db.query(
     `UPDATE root_causes 
      SET occurrence_count = occurrence_count + 1,
@@ -425,6 +444,9 @@ async function incrementRootCauseOccurrence(rootCauseId) {
 }
 
 async function updateLastSeen(rootCauseId) {
+  if (rootCauseId == null) {
+    return null;
+  }
   await db.query(
     `UPDATE root_causes 
      SET last_seen_at = CURRENT_TIMESTAMP

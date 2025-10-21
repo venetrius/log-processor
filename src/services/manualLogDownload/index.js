@@ -19,6 +19,7 @@ const path = require('path');
 const { execSync } = require('child_process');
 const { fetchSuitId } = require('../../ghCommand');
 const db = require("../../db/db");
+const { updateJobLogsAccessibility } = require('../../db/repositoryExtensions');
 
 const TMP_DOWNLOAD_WORKFLOW_DIR = path.resolve(__dirname, '../../../files/tmp/downloaded-logs');
 const FINAL_JOB_DIR = path.resolve(__dirname, '../../../files');
@@ -72,7 +73,6 @@ async function fetchJobLogs(jobId, runId, runName, repository) {
 
   // GitHub Actions replaces "/" with " _ " (space-underscore-space) in log filenames
   const normalizedRunName = runName.replace(/\//g, '_');
-
   // Find matching files (could be multiple if there are numbered prefixes)
   const matchingFiles = jobFiles.filter((f) => {
     // Remove the numbered prefix (e.g., "7_") and .txt extension for comparison
@@ -96,7 +96,16 @@ async function fetchJobLogs(jobId, runId, runName, repository) {
   const jobSourcePath = path.join(extractPath, matchingFiles[0]);
   fs.copyFileSync(jobSourcePath, finalJobLogPath);
 
-  console.debug(`✅ Job log copied to: ${finalJobLogPath}`);
+  console.debug(`✅ Job log copied to: ${finalJobLogPath} from ${jobSourcePath}`);
+
+  // UPDATE: Mark logs as accessible in database
+  try {
+    await updateJobLogsAccessibility(jobId, finalJobLogPath, true);
+    console.debug(`✅ Database updated: logs_accessible = true for job ${jobId}`);
+  } catch (error) {
+    console.warn(`⚠️  Could not update logs_accessible for job ${jobId}:`, error.message);
+  }
+
   return finalJobLogPath;
 }
 

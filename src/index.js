@@ -22,11 +22,14 @@ const { runGhCommand, runCommandToFile } = require('./ghCommand.js')
 const { loadConfig, validateConfig, ensureLogsDirectory, logFileExists } = require('./configLoader.js')
 const db = require('./db/db.js')
 const repository = require('./db/repository.js')
+const { updateJobLogsAccessibility, runHasJobsNeedingLogs } = require('./db/repositoryExtensions.js')
+const { analyzeJobPatternOnly } = require('./services/rootCauseServiceExtensions.js')
 const enhancedStats = require('./enhancedStats.js')
 const rootCauseService = require('./services/rootCauseService')
 const { createLLMClient } = require('./llm/llmClient')
 const { PromptBuilder } = require('./llm/promptBuilder')
 const { fetchJobLogs } = require('./services/manualLogDownload/index')
+const { displayManualLogDownloadSummary } = require('./services/manualLogDownload/downloadSummary')
 
 const getErrorAnnotations = async jobId => {
     const { repository: orgAndRepo }  = loadConfig();
@@ -71,31 +74,78 @@ const downloadJobLog = async (runId, jobId, jobName, config) => {
     return manualLogPath;
 }
 
-const parseJobs = async (jobs, runId, config) => {
-    let job = null
-    for(job of jobs) {
-        const jobId = job.id
-        // status: 'completed',
-        // conclusion: 'success',
-        if(job.conclusion !== 'success' && job.conclusion !== 'skipped') {
-            console.log(`❌ FAILED - ${job.name}`)
+/**
+ * Process jobs that need log downloads and deeper analysis
+ * Used for reprocessing runs where pattern matching was insufficient
+ * @param {Array} jobs - Jobs from GitHub API
+ * @param {string} runId - Workflow run ID
+ * @param {Object} config - Configuration
+ */
+const reprocessJobsNeedingLogs = async (jobs, runId, config) => {
+    console.log(`   🔄 Reprocessing jobs that need logs...`);
+
+    for (const job of jobs) {
+        const jobId = job.id;
+
+        if (job.conclusion !== 'success' && job.conclusion !== 'skipped') {
+            // Check if this job already has logs
+            const jobRecord = await db.query('SELECT logs_accessible FROM jobs WHERE job_id = $1', [jobId]);
+            if (jobRecord.rows.length === 0 || jobRecord.rows[0].logs_accessible) {
+                console.log(`   ⏭️  Job ${jobId} already has logs, skipping...`);
+                continue;
+            }
+
+            console.log(`   🔍 Reprocessing job: ${job.name}`);
 
             // Get error annotations
-            const errorAnnotations = await getErrorAnnotations(jobId)
+            const errorAnnotations = await getErrorAnnotations(jobId);
+            const failedSteps = job.steps.filter(step => step.conclusion === 'failure');
+
+            // Download logs now
+            const logPath = await downloadJobLog(runId, jobId, job.name, config);
+
+            if (logPath) {
+                await updateJobLogsAccessibility(jobId, logPath, true);
+                console.log(`   ✅ Logs downloaded for job ${jobId}`);
+
+                // Run full analysis with LLM if enabled
+                if (config.llm?.enabled) {
+                    console.log(`   🤖 Running full analysis with LLM...`);
+                    await rootCauseService.analyzeJob(job.id, errorAnnotations, failedSteps, {
+                        jobName: job.name,
+                        workflowName: config.workflowName || 'Unknown',
+                        repository: config.repository
+                    });
+                }
+            } else {
+                await updateJobLogsAccessibility(jobId, null, false);
+                console.log(`   ⚠️  Log download failed for job ${jobId}`);
+            }
+        }
+    }
+}
+
+const parseJobs = async (jobs, runId, config) => {
+    let job = null;
+    for(job of jobs) {
+        const jobId = job.id;
+
+        if(job.conclusion !== 'success' && job.conclusion !== 'skipped') {
+            console.log(`❌ FAILED - ${job.name}`);
+
+            // Get error annotations
+            const errorAnnotations = await getErrorAnnotations(jobId);
             errorAnnotations.forEach(element => {
-                console.log(`   --- ${element.message}`)
+                console.log(`   --- ${element.message}`);
             });
 
             // Display failed steps
             const failedSteps = job.steps.filter(step => step.conclusion === 'failure');
             failedSteps.forEach(step => {
-                console.log(`   --------- ${step.name} failed`)
+                console.log(`   --------- ${step.name} failed`);
             });
 
-            // Download log if configured
-            const logPath = await downloadJobLog(runId, jobId, job.name, config);
-
-            // Store job in database
+            // Store job in database WITHOUT logs (logs_accessible=false)
             try {
                 await repository.upsertJob({
                     id: job.id,
@@ -106,7 +156,8 @@ const parseJobs = async (jobs, runId, config) => {
                     started_at: job.started_at,
                     completed_at: job.completed_at,
                     html_url: job.html_url,
-                    log_file_path: logPath
+                    log_file_path: null,
+                    logs_accessible: false
                 });
 
                 // Store failed steps
@@ -136,12 +187,52 @@ const parseJobs = async (jobs, runId, config) => {
                     });
                 }
 
-                // Analyze root cause with context
-                await rootCauseService.analyzeJob(job.id, errorAnnotations, failedSteps, {
-                    jobName: job.name,
-                    workflowName: config.workflowName || 'Unknown',
-                    repository: config.repository
-                });
+                // PHASE 1: Pattern-only analysis (fast, no logs needed)
+                console.log(`   🔍 Running pattern-only analysis...`);
+                const patternResult = await analyzeJobPatternOnly(jobId, errorAnnotations, failedSteps);
+
+                console.log(`   📊 Pattern confidence: ${(patternResult.confidence * 100).toFixed(1)}% (${patternResult.duration}ms)`);
+
+                // Determine if we need logs based on confidence threshold
+                const llmEnabled = config.llm?.enabled;
+                const confidenceThreshold = config.llm?.confidenceThreshold || 0.8;
+                const needsLogs = patternResult.needsLogs ||
+                                (llmEnabled && patternResult.confidence < confidenceThreshold);
+
+                if (needsLogs && config.downloadLogs) {
+                    console.log(`   ⚡ Low confidence (${(patternResult.confidence * 100).toFixed(1)}%) - downloading logs for deeper analysis...`);
+
+                    // PHASE 2: Download logs (only when needed)
+                    const logPath = await downloadJobLog(runId, jobId, job.name, config);
+
+                    // Update job with log path and accessibility status
+                    if (logPath) {
+                        await updateJobLogsAccessibility(jobId, logPath, true);
+                        console.log(`   ✅ Logs accessible - proceeding with full analysis`);
+
+                        // PHASE 3: Full analysis with logs (includes LLM if enabled)
+                        if (llmEnabled) {
+                            console.log(`   🤖 Running full analysis with LLM...`);
+                            await rootCauseService.analyzeJob(job.id, errorAnnotations, failedSteps, {
+                                jobName: job.name,
+                                workflowName: config.workflowName || 'Unknown',
+                                repository: config.repository
+                            });
+                        }
+                    } else {
+                        // Log download failed - mark as inaccessible
+                        await updateJobLogsAccessibility(jobId, null, false);
+                        console.log(`   ⚠️  Log download failed - marked as inaccessible`);
+                    }
+                } else if (needsLogs && !config.downloadLogs) {
+                    console.log(`   ⏭️  Logs needed but download disabled in config`);
+                } else {
+                    console.log(`   ✅ Pattern match sufficient (${(patternResult.confidence * 100).toFixed(1)}%) - skipping log download`);
+                    if (patternResult.rootCause) {
+                        console.log(`   🎯 Root cause: ${patternResult.rootCause.title}`);
+                    }
+                }
+
             } catch (dbError) {
                 console.error(`   ⚠️  Database error for job ${jobId}:`, dbError.message);
             }
@@ -153,10 +244,27 @@ const loadLogs = async (url, config, runData = null) => {
     const match = url.match(/\/actions\/runs\/(\d+)/);
     const runId = match ? match[1] : null;
 
+    // Check if run exists
     const exists = await rootCauseService.workflowRunExists(runId);
+
     if (exists) {
-      console.log(`⏭️  Run ${runId} already processed, skipping...`);
-      return;
+        // Check if this run has jobs that need logs
+        const needsLogs = await runHasJobsNeedingLogs(runId);
+
+        if (needsLogs) {
+            console.log(`🔄 Run ${runId} already processed but has jobs needing logs - reprocessing...`);
+
+            // Fetch jobs from GitHub (use cache if available)
+            const command = `gh api repos/${config.repository}/actions/runs/${runId}/jobs`;
+            const jobs = await runGhCommand(command);
+
+            // Reprocess only jobs that need logs
+            await reprocessJobsNeedingLogs(jobs.jobs, runId, config);
+            return;
+        } else {
+            console.log(`⏭️  Run ${runId} already fully processed, skipping...`);
+            return;
+        }
     }
 
     console.log(`\n🔍 Processing run ID: ${runId}`)
@@ -200,7 +308,7 @@ const getWorkflowRuns = async (workflowFileName, count, config, branch = null) =
     const branchInfo = branch ? ` (branch: ${branch})` : '';
     console.log(`\n📋 Fetching last ${count} runs for workflow: ${workflowFileName}${branchInfo}`)
 
-    let command = `gh api repos/${config.repository}/actions/workflows/${workflowFileName}/runs?per_page=${count}`;
+    let command = `gh api "repos/${config.repository}/actions/workflows/${workflowFileName}/runs?per_page=${count}"`;
     if (branch) {
         command += `&branch=${branch}`;
     }
@@ -269,6 +377,7 @@ const processAll = async () => {
     console.log(`💾 Download logs: ${config.downloadLogs ? 'Yes' : 'No'}`);
     console.log(`🔄 Force download: ${config.forceDownload ? 'Yes' : 'No'}`);
     console.log(`🤖 LLM Analysis: ${config.llm?.enabled ? 'Enabled' : 'Disabled'}`);
+    console.log(`⚡ Lazy Loading: Enabled (downloads logs only when needed)`);
 
     // Process single run if enabled
     if (config.singleRun.enabled && config.singleRun.url) {
@@ -334,6 +443,27 @@ const processAll = async () => {
             console.log(`   Failed runs: ${stats.failed_runs}`);
             console.log(`   Failed jobs: ${stats.failed_jobs}`);
             console.log(`   Error annotations: ${stats.total_error_annotations}`);
+
+            // Show lazy loading stats
+            const lazyLoadingStats = await db.query(`
+                SELECT
+                    COUNT(*) FILTER (WHERE logs_accessible = true) as jobs_with_logs,
+                    COUNT(*) FILTER (WHERE logs_accessible = false) as jobs_without_logs,
+                    COUNT(*) as total_failed_jobs
+                FROM jobs
+                JOIN workflow_runs wr ON jobs.run_id = wr.run_id
+                WHERE wr.repository = $1 AND jobs.conclusion = 'failure';
+            `, [config.repository]);
+
+            if (lazyLoadingStats.rows.length > 0) {
+                const llStats = lazyLoadingStats.rows[0];
+                console.log(`\n⚡ Lazy Loading Statistics:`);
+                console.log(`   Jobs with logs: ${llStats.jobs_with_logs}`);
+                console.log(`   Jobs without logs: ${llStats.jobs_without_logs}`);
+                const percentSaved = ((llStats.jobs_without_logs / llStats.total_failed_jobs) * 100).toFixed(1);
+                console.log(`   Log downloads saved: ${percentSaved}%`);
+            }
+
             console.log(`\n🎯 Root Cause Analysis:`);
             const rcStats = await enhancedStats.getRootCauseStatsDetailed(config.repository);
             console.log(`   Jobs analyzed: ${rcStats.jobs_with_root_cause || 0}`);
@@ -343,18 +473,20 @@ const processAll = async () => {
             console.log(`   Total failed jobs: ${rcStats.total_failed_jobs || 0}`);
             console.log(`   Match rate: ${rcStats.match_rate_percent || 0}%`);
             console.log(`   Avg confidence: ${parseFloat(rcStats.avg_confidence || 0).toFixed(2)}`);
+            await displayManualLogDownloadSummary(config.repository);
         } catch (error) {
             console.error('   ⚠️  Could not fetch statistics:', error.message);
         }
     }
 }
 
-// Run the processor
-processAll().catch(error => {
-    console.error('❌ Fatal error:', error.message);
-    process.exit(1);
-}).finally(async () => {
-    // Close database connection pool
-    await db.end();
-});
+// Allow this to be run directly
+if (require.main === module) {
+    processAll().catch(error => {
+        console.error('Fatal error:', error);
+        process.exit(1);
+    });
+}
+
+module.exports = { processAll, getWorkflowRuns, loadLogs };
 

@@ -67,6 +67,7 @@ async function createSchema() {
         completed_at TIMESTAMP,
         html_url TEXT,
         log_file_path TEXT,
+        logs_accessible BOOLEAN DEFAULT false,
         fetched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
     `);
@@ -160,15 +161,19 @@ async function createSchema() {
 
     // Workflow tracking indexes
     await db.query(`
-      CREATE INDEX IF NOT EXISTS idx_jobs_run_id 
+      CREATE INDEX IF NOT EXISTS idx_jobs_run_id
       ON jobs(run_id);
     `);
     await db.query(`
-      CREATE INDEX IF NOT EXISTS idx_jobs_conclusion 
+      CREATE INDEX IF NOT EXISTS idx_jobs_conclusion
       ON jobs(conclusion);
     `);
     await db.query(`
-      CREATE INDEX IF NOT EXISTS idx_workflow_runs_repository 
+      CREATE INDEX IF NOT EXISTS idx_jobs_logs_accessible
+      ON jobs(logs_accessible);
+    `);
+    await db.query(`
+      CREATE INDEX IF NOT EXISTS idx_workflow_runs_repository
       ON workflow_runs(repository);
     `);
     await db.query(`
@@ -176,51 +181,51 @@ async function createSchema() {
       ON workflow_runs(conclusion);
     `);
     await db.query(`
-      CREATE INDEX IF NOT EXISTS idx_workflow_runs_branch 
+      CREATE INDEX IF NOT EXISTS idx_workflow_runs_branch
       ON workflow_runs(head_branch);
     `);
     await db.query(`
-      CREATE INDEX IF NOT EXISTS idx_error_annotations_job_id 
+      CREATE INDEX IF NOT EXISTS idx_error_annotations_job_id
       ON error_annotations(job_id);
     `);
     console.log('✅ Created workflow tracking indexes');
 
     // Root cause indexes
     await db.query(`
-      CREATE INDEX IF NOT EXISTS idx_root_causes_category 
+      CREATE INDEX IF NOT EXISTS idx_root_causes_category
       ON root_causes(category);
     `);
     await db.query(`
-      CREATE INDEX IF NOT EXISTS idx_root_causes_embedding 
+      CREATE INDEX IF NOT EXISTS idx_root_causes_embedding
       ON root_causes USING ivfflat (annotation_embedding vector_cosine_ops)
       WITH (lists = 100);
     `);
     await db.query(`
-      CREATE INDEX IF NOT EXISTS idx_root_causes_no_embedding 
-      ON root_causes(embedding_generated) 
+      CREATE INDEX IF NOT EXISTS idx_root_causes_no_embedding
+      ON root_causes(embedding_generated)
       WHERE embedding_generated = FALSE;
     `);
     await db.query(`
-      CREATE INDEX IF NOT EXISTS idx_root_causes_discovery 
+      CREATE INDEX IF NOT EXISTS idx_root_causes_discovery
       ON root_causes(discovery_method);
     `);
     await db.query(`
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_root_causes_unique_title 
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_root_causes_unique_title
       ON root_causes(category, title);
     `);
     console.log('✅ Created root cause indexes');
 
     // Job-root cause relationship indexes
     await db.query(`
-      CREATE INDEX IF NOT EXISTS idx_job_root_causes_job_id 
+      CREATE INDEX IF NOT EXISTS idx_job_root_causes_job_id
       ON job_root_causes(job_id);
     `);
     await db.query(`
-      CREATE INDEX IF NOT EXISTS idx_job_root_causes_root_cause_id 
+      CREATE INDEX IF NOT EXISTS idx_job_root_causes_root_cause_id
       ON job_root_causes(root_cause_id);
     `);
     await db.query(`
-      CREATE INDEX IF NOT EXISTS idx_job_root_causes_method 
+      CREATE INDEX IF NOT EXISTS idx_job_root_causes_method
       ON job_root_causes(detection_method);
     `);
     console.log('✅ Created job-root cause relationship indexes');
@@ -230,7 +235,7 @@ async function createSchema() {
     console.log('');
     console.log('📊 Tables created:');
     console.log('   • workflow_runs - GitHub workflow run metadata');
-    console.log('   • jobs - Job execution details');
+    console.log('   • jobs - Job execution details (with logs_accessible for lazy loading)');
     console.log('   • job_steps - Individual step execution');
     console.log('   • error_annotations - Error messages and failures');
     console.log('   • root_causes - Knowledge base of failure patterns');
@@ -315,6 +320,7 @@ if (require.main === module) {
           console.log('  • Core workflow tracking tables');
           console.log('  • Root cause analysis (Phase 3.2)');
           console.log('  • Semantic search support (384-dim embeddings)');
+          console.log('  • Lazy loading optimization (logs_accessible)');
       }
     } catch (error) {
       console.error('❌ Command failed:', error);
