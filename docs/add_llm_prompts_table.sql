@@ -1,8 +1,11 @@
 /*
  * Migration: Add llm_prompts table for prompt-based semantic search
- * Run this to add the llm_prompts table to your existing schema
  *
- * Usage: psql -d log-process -f add_llm_prompts_table.sql
+ * NOTE: This table is intentionally kept as a separate migration (not in schema.js)
+ * because it stores cache data that should persist across database resets during development.
+ * When you run `npm run db:reset`, this table preserves your LLM prompt cache.
+ *
+ * Usage: psql -d log-process -f docs/add_llm_prompts_table.sql
  */
 
 -- Create llm_prompts table
@@ -37,4 +40,3 @@ CREATE INDEX IF NOT EXISTS idx_llm_prompts_no_embedding ON llm_prompts(id) WHERE
 
 -- Verify table was created
 SELECT 'llm_prompts table created successfully!' as status;
-

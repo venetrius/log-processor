@@ -206,115 +206,62 @@ log-processor/
 
 ## License
 Licensed under Apache License Version 2.0
+
+---
+
+## Current Features & Architecture
+
+### ✅ Implemented Intelligence Features
+
+**Three-Tier Detection System:**
+1. **Pattern Matching** - Instant regex-based detection for known failures
+2. **Prompt Semantic Search** - Find similar historical failures using embeddings (50-100ms, free)
+3. **LLM Analysis** - AI-powered fallback for unknown failures (2-5s, costs money)
+
+**Optimizations:**
+- **Lazy Loading** - Pattern analysis runs before downloading logs
+- **Prompt Caching** - Reuses results from similar past failures
+- **GitHub CLI Caching** - Stores API responses locally
+- **Local Embeddings** - Uses Xenova/transformers.js (no API costs)
+
+**See `docs/ARCHITECTURE.md` for detailed implementation details.**
+
 ---
 
 ## Roadmap & Planned Improvements
 
-### Phase 1: Resource Optimization & Configuration ✅ COMPLETE
-**Status:** ✅ Complete | **Effort:** ~1 hour
+### ✅ Phase 1: Resource Optimization & Configuration - COMPLETE
+- Skip existing log downloads
+- Configuration file support
+- Job definitions from config
+- Clean dependencies
 
-- [x] **Skip existing log downloads** - Check if log file exists before downloading to save bandwidth and time
-- [x] **Configuration file** - Add `config.json` for settings:
-  - Enable/disable log downloads completely
-  - Force re-download even if file exists
-  - Configure default repository
-  - Set number of recent runs to fetch
-- [x] **Job definitions from config** - Support running against periodic workflows without manual run IDs:
-  - Define workflow names/IDs in config
-  - Automatically fetch last X runs for configured workflows
-  - Example: Monitor nightly builds without copying URLs each time
-- [x] **Clean up dependencies** - Removed unused packages
-- [x] **Extract download function** - Refactored for better readability with early returns
+### ✅ Phase 2: Data Persistence - COMPLETE
+- PostgreSQL integration
+- Historical tracking
+- Query interface
+- Export functionality
 
-**Benefits:** ✅ Immediate usability improvements, faster iteration, less manual work
-
-### Phase 2: Data Persistence (Foundation) ✅ COMPLETE
-**Status:** ✅ Complete | **Effort:** ~3 hours
-
-- [x] **PSQL database integration** - Store failure data locally:
-  - Track failed jobs over time
-  - Store error annotations and messages
-  - Record job metadata (run ID, job ID, timestamp, conclusion)
-- [x] **Query interface** - Basic querying for historical data:
-  - Find all failures for a specific job name
-  - Track failure trends over time
-  - Identify recurring issues
-- [x] **Export functionality** - Generate reports from stored data
-
-**Benefits:** Historical tracking, trend analysis, better debugging context
-
-### Phase 3: Intelligent Analysis (Advanced)
-**Status:** Planned | **Effort:** Ongoing
-
-- [ ] **LLM integration for log parsing** - Use AI to analyze failures:
-  - Extract root causes from log files
-  - Identify patterns across similar failures
-- [ ] **Pattern-based root cause detection** - Regex patterns for common failures
-- [ ] **Semantic search** - Find similar past failures using embeddings (pgvector)
-
-#### Phase 3 - Nice to Have Features 🌟
-- [ ] **Historical comparison** - LLM can request previous run logs with their root causes for pattern comparison
-- [ ] **Dynamic log exploration** - LLM can provide regex patterns that the client executes and returns matching log segments
-- [ ] **Interactive analysis** - Multi-turn conversation where LLM requests specific context iteratively:
-  - Specific file contents from repository
-  - Diff between failing and passing runs
-  - Related workflow step outputs
-  - List of recent changes/commits
-
-**Benefits:** Faster debugging, pattern recognition, proactive issue detection
-
-## Intelligent Analysis (Current State)
-Pattern-based detection + optional LLM fallback (mock / prototype). The earlier `rootCauseAnalyzer.js` facade was removed to avoid circular dependencies; logic resides in `services/rootCauseService.js`.
-
-### Current Capabilities
-- Pattern-first matching using regex catalogue
-- LLM fallback with discriminated union response (`root_cause` | `need_more_info`)
+### ✅ Phase 3: Intelligent Analysis - COMPLETE
+- Pattern-based root cause detection
+- LLM integration with discriminated union responses
+- Prompt-based semantic search
+- Local embedding generation
 - Confidence threshold enforcement
-- Audit persistence of all LLM outcomes (success, malformed, need_more_info, below_threshold)
 
-### Not Implemented Yet (Planned / Nice-to-Have)
-- Semantic similarity (embeddings + pgvector search) prior to LLM invocation
-- Token/cost usage persistence in a dedicated table (currently only in-memory per response)
-- Structured JSON schema validation beyond discriminator + parse
-- Retry / exponential backoff for OpenAI & Copilot adapters (raw HTTPS only right now)
-- Iterative follow-up handling when LLM returns `need_more_info` (log slice expansion)
-- Decoupled persistence layer (DB helpers currently inside service)
+### 🚧 Phase 4: Advanced Features - In Progress
+- [ ] Branch filtering for workflow runs
+- [ ] Improved log download experience
+- [ ] Token/cost metrics persistence and reporting
+- [ ] Enhanced response schema validation
+- [ ] Retry/backoff for LLM adapters
+- [ ] Iterative `need_more_info` follow-up flow
+- [ ] Batch embedding generation (nightly cron)
+- [ ] Failure clustering for GitHub issue creation
 
-### Near-Term Roadmap
-1. Add semantic search module (embeddings generation + vector indexing).
-2. Persist token metrics & add cost reports.
-3. Introduce response schema validation (lightweight JSON Schema or manual field checks).
-4. Implement adapter-level retry with jitter and clearer error taxonomy.
-5. Support iterative log expansion flow for `need_more_info` responses.
-6. Extract DB helper functions to dedicated persistence utility to reduce coupling.
-7. Add unit tests for `rootCauseService` paths.
-
-## Important features - resolving limitations
-- [ ] being able to define list of branches to filter workflow runs based on
-- [ ] download is working with a work around - link to download link is printed, improve this
-  - [ ] The also contains the jobId -> 1 less click
-  - [ ] The link are collected and printed out after the run, they are also saved into the db
-- [ ] Persist token/cost metrics (new table) and expose stats
-- [ ] Add response schema validation for LLM outputs
-- [ ] Add retry/backoff for LLM adapters
-- [ ] Implement iterative `need_more_info` follow-up flow
-- [ ] Extract persistence layer from `rootCauseService`
-
-### Future Improvements (Nice-to-Have)
-- [ ] **Create detailed HTML reports** - Summarize failures with root causes and links to logs
-- [ ] **YAML configuration** - Move from JSON to YAML to support comments in config files
-- [ ] **Pagination support** - Handle repositories with many workflow runs efficiently
-- [ ] **Filtering options** - Filter jobs by name, status, or time range when querying
-- [ ] Accept run URL/ID and repo as CLI arguments
-- [ ] Parallelize log downloads for multiple failed jobs
-- [ ] Add filtering options (include successful jobs, specific job names)
-- [ ] Add unit tests and CI pipeline
-- [ ] Support for downloading and analyzing workflow artifacts
-- [ ] Summary statistics (total logs downloaded, total failures, etc.)
-- [ ] Progress indicators for processing multiple runs
-- [ ] **Configuration Loading**: `loadConfig()` is called multiple times throughout the codebase. Should be refactored to load once at startup and pass config as parameter
-- [ ] Error handling could be more robust for network failures and API rate limits
-
----
-
-**Quick reference:** Edit URL → `node index.js` → Review output → Check `./files/*.log`
+### 🌟 Nice-to-Have Features
+- [ ] Historical comparison - LLM requests previous run logs with root causes
+- [ ] Dynamic log exploration - LLM provides regex patterns for targeted log segment extraction
+- [ ] Interactive analysis - Multi-turn conversation for iterative context gathering
+- [ ] Repository file inspection - LLM can request specific files from the repository
+- [ ] Diff analysis - Compare failing vs passing runs
