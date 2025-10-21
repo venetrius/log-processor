@@ -308,12 +308,12 @@ const getWorkflowRuns = async (workflowFileName, count, config, branch = null) =
     const branchInfo = branch ? ` (branch: ${branch})` : '';
     console.log(`\n📋 Fetching last ${count} runs for workflow: ${workflowFileName}${branchInfo}`)
 
-    let command = `gh api "repos/${config.repository}/actions/workflows/${workflowFileName}/runs?per_page=${count}"`;
+    let command = `gh api "repos/${config.repository}/actions/workflows/${workflowFileName}/runs?per_page=${count}`;
     if (branch) {
         command += `&branch=${branch}`;
     }
-    console.log(`command
-    : ${command}`)
+    command += `"`;
+    console.debug(`command: ${command}`);
     const response = await runGhCommand(command);
     return response.workflow_runs || [];
 }
