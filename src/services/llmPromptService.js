@@ -19,6 +19,40 @@ const crypto = require('crypto');
 const db = require('../db/db');
 const localEmbedAdapter = require('../llm/adapters/localEmbedAdapter');
 
+// Cache the table existence check to avoid repeated queries
+let tableExistsCache = null;
+
+/**
+ * Check if llm_prompts table exists in the database
+ * Caches the result to avoid repeated queries
+ */
+async function checkTableExists() {
+  if (tableExistsCache !== null) {
+    return tableExistsCache;
+  }
+
+  try {
+    const result = await db.query(`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables 
+        WHERE table_name = 'llm_prompts'
+      );
+    `);
+    tableExistsCache = result.rows[0].exists;
+
+    if (!tableExistsCache) {
+      console.log('⚠️  llm_prompts table not found - prompt caching disabled');
+      console.log('   To enable caching, run: psql -d log-process -f docs/add_llm_prompts_table.sql');
+    }
+
+    return tableExistsCache;
+  } catch (error) {
+    console.warn('⚠️  Could not check for llm_prompts table:', error.message);
+    tableExistsCache = false;
+    return false;
+  }
+}
+
 /**
  * Generate SHA-256 hash of text for deduplication
  */
@@ -98,71 +132,84 @@ function truncateLogExcerpt(logText, maxChars) {
  * This allows us to do semantic search on historical failures
  *
  * KEY INSIGHT: Only stores failure-specific context, not generic prompt template
+ *
+ * Returns cached:false and no promptId if table doesn't exist (graceful degradation)
  */
 async function savePrompt({ messages, jobId, errorAnnotations, failedSteps, context = {} }) {
-  // Build context text (failure-specific only, no generic instructions)
-  const contextText = buildContextForEmbedding({ errorAnnotations, failedSteps, context });
-  const promptHash = generatePromptHash(contextText);
-
-  console.log(`🔍 Context hash: ${promptHash.slice(0, 8)}... (${contextText.length} chars)`);
-
-  // Check if this exact context already exists
-  const existing = await db.query(
-    'SELECT id, root_cause_id, confidence, llm_response FROM llm_prompts WHERE prompt_hash = $1',
-    [promptHash]
-  );
-
-  if (existing.rows.length > 0) {
-    console.log(`💾 Exact context match found - reusing cached result`);
-    const cached = existing.rows[0];
-
-    // Update reuse tracking
-    await db.query(
-      `UPDATE llm_prompts 
-       SET reused_count = reused_count + 1, 
-           last_reused_at = NOW() 
-       WHERE id = $1`,
-      [cached.id]
-    );
-
-    return {
-      promptId: cached.id,
-      cached: true,
-      rootCauseId: cached.root_cause_id,
-      confidence: cached.confidence,
-      llmResponse: cached.llm_response
-    };
+  // Check if table exists first
+  const tableExists = await checkTableExists();
+  if (!tableExists) {
+    return { cached: false, tableNotFound: true };
   }
 
-  // Generate embedding for the context (not the full prompt with instructions)
-  console.log(`🔧 Generating embedding for failure context...`);
-  const { embedding } = await localEmbedAdapter.generateEmbedding(contextText);
+  try {
+    // Build context text (failure-specific only, no generic instructions)
+    const contextText = buildContextForEmbedding({ errorAnnotations, failedSteps, context });
+    const promptHash = generatePromptHash(contextText);
 
-  // Save context with embedding
-  const result = await db.query(
-    `INSERT INTO llm_prompts (
-      prompt_hash, prompt_text, prompt_embedding,
-      job_id, error_annotation_ids, failed_step_names, log_excerpt_length
-    ) VALUES ($1, $2, $3::vector, $4, $5, $6, $7)
-    RETURNING id`,
-    [
-      promptHash,
-      contextText,  // Store only the specific context, not full prompt
-      JSON.stringify(embedding),
-      jobId,
-      errorAnnotations ? errorAnnotations.map(a => a.id).filter(Boolean) : [],
-      failedSteps ? failedSteps.map(s => s.step_name || s.name).filter(Boolean) : [],
-      context.logLines ? context.logLines.split('\n').length : 0
-    ]
-  );
+    console.log(`🔍 Context hash: ${promptHash.slice(0, 8)}... (${contextText.length} chars)`);
 
-  console.log(`✅ Context saved with ID: ${result.rows[0].id}`);
+    // Check if this exact context already exists
+    const existing = await db.query(
+      'SELECT id, root_cause_id, confidence, llm_response FROM llm_prompts WHERE prompt_hash = $1',
+      [promptHash]
+    );
 
-  return {
-    promptId: result.rows[0].id,
-    cached: false,
-    embedding
-  };
+    if (existing.rows.length > 0) {
+      console.log(`💾 Exact context match found - reusing cached result`);
+      const cached = existing.rows[0];
+
+      // Update reuse tracking
+      await db.query(
+        `UPDATE llm_prompts 
+         SET reused_count = reused_count + 1, 
+             last_reused_at = NOW() 
+         WHERE id = $1`,
+        [cached.id]
+      );
+
+      return {
+        promptId: cached.id,
+        cached: true,
+        rootCauseId: cached.root_cause_id,
+        confidence: cached.confidence,
+        llmResponse: cached.llm_response
+      };
+    }
+
+    // Generate embedding for the context (not the full prompt with instructions)
+    console.log(`🔧 Generating embedding for failure context...`);
+    const { embedding } = await localEmbedAdapter.generateEmbedding(contextText);
+
+    // Save context with embedding
+    const result = await db.query(
+      `INSERT INTO llm_prompts (
+        prompt_hash, prompt_text, prompt_embedding,
+        job_id, error_annotation_ids, failed_step_names, log_excerpt_length
+      ) VALUES ($1, $2, $3::vector, $4, $5, $6, $7)
+      RETURNING id`,
+      [
+        promptHash,
+        contextText,  // Store only the specific context, not full prompt
+        JSON.stringify(embedding),
+        jobId,
+        errorAnnotations ? errorAnnotations.map(a => a.id).filter(Boolean) : [],
+        failedSteps ? failedSteps.map(s => s.step_name || s.name).filter(Boolean) : [],
+        context.logLines ? context.logLines.split('\n').length : 0
+      ]
+    );
+
+    console.log(`✅ Context saved with ID: ${result.rows[0].id}`);
+
+    return {
+      promptId: result.rows[0].id,
+      cached: false,
+      embedding
+    };
+  } catch (error) {
+    console.warn('⚠️  Failed to save prompt to cache:', error.message);
+    return { cached: false, error: error.message };
+  }
 }
 
 /**
@@ -171,41 +218,54 @@ async function savePrompt({ messages, jobId, errorAnnotations, failedSteps, cont
  * - It includes full context (errors + steps + logs + metadata)
  * - Different contexts create different embeddings
  * - Solves the "same symptom, different cause" problem
+ *
+ * Returns empty array if table doesn't exist (graceful degradation)
  */
 async function findSimilarPrompts(promptEmbedding, threshold = 0.85, limit = 5) {
-  const result = await db.query(
-    `SELECT 
-       lp.id as prompt_id,
-       lp.prompt_text,
-       lp.root_cause_id,
-       lp.confidence as llm_confidence,
-       lp.llm_response,
-       lp.llm_model,
-       lp.reused_count,
-       lp.last_reused_at,
-       lp.created_at,
-       rc.category,
-       rc.title as root_cause_title,
-       rc.description as root_cause_description,
-       rc.suggested_fix,
-       rc.occurrence_count,
-       rc.discovery_method,
-       1 - (lp.prompt_embedding <=> $1::vector) as similarity
-     FROM llm_prompts lp
-     LEFT JOIN root_causes rc ON lp.root_cause_id = rc.id
-     WHERE lp.prompt_embedding IS NOT NULL
-       AND lp.root_cause_id IS NOT NULL
-       AND 1 - (lp.prompt_embedding <=> $1::vector) >= $2
-     ORDER BY lp.prompt_embedding <=> $1::vector
-     LIMIT $3`,
-    [JSON.stringify(promptEmbedding), threshold, limit]
-  );
+  const tableExists = await checkTableExists();
+  if (!tableExists) {
+    return [];
+  }
 
-  return result.rows;
+  try {
+    const result = await db.query(
+      `SELECT 
+         lp.id as prompt_id,
+         lp.prompt_text,
+         lp.root_cause_id,
+         lp.confidence as llm_confidence,
+         lp.llm_response,
+         lp.llm_model,
+         lp.reused_count,
+         lp.last_reused_at,
+         lp.created_at,
+         rc.category,
+         rc.title as root_cause_title,
+         rc.description as root_cause_description,
+         rc.suggested_fix,
+         rc.occurrence_count,
+         rc.discovery_method,
+         1 - (lp.prompt_embedding <=> $1::vector) as similarity
+       FROM llm_prompts lp
+       LEFT JOIN root_causes rc ON lp.root_cause_id = rc.id
+       WHERE lp.prompt_embedding IS NOT NULL
+         AND lp.root_cause_id IS NOT NULL
+         AND 1 - (lp.prompt_embedding <=> $1::vector) >= $2
+       ORDER BY lp.prompt_embedding <=> $1::vector
+       LIMIT $3`,
+      [JSON.stringify(promptEmbedding), threshold, limit]
+    );
+
+    return result.rows;
+  } catch (error) {
+    console.warn('⚠️  Failed to search similar prompts:', error.message);
+    return [];
+  }
 }
 
 /**
  * Update prompt with LLM response after analysis
+ * Silently skips if table doesn't exist
  */
 async function updatePromptWithResponse(promptId, {
   llmModel,
@@ -215,77 +275,119 @@ async function updatePromptWithResponse(promptId, {
   rootCauseId,
   confidence
 }) {
-  await db.query(
-    `UPDATE llm_prompts 
-     SET llm_model = $1,
-         llm_response = $2,
-         llm_tokens_used = $3,
-         llm_duration_ms = $4,
-         root_cause_id = $5,
-         confidence = $6
-     WHERE id = $7`,
-    [llmModel, llmResponse, llmTokens, llmDuration, rootCauseId, confidence, promptId]
-  );
+  const tableExists = await checkTableExists();
+  if (!tableExists || !promptId) {
+    return;
+  }
+
+  try {
+    await db.query(
+      `UPDATE llm_prompts 
+       SET llm_model = $1,
+           llm_response = $2,
+           llm_tokens_used = $3,
+           llm_duration_ms = $4,
+           root_cause_id = $5,
+           confidence = $6
+       WHERE id = $7`,
+      [llmModel, llmResponse, llmTokens, llmDuration, rootCauseId, confidence, promptId]
+    );
+  } catch (error) {
+    console.warn('⚠️  Failed to update prompt with response:', error.message);
+  }
 }
 
 /**
  * Mark a prompt as reused (when semantic match is accepted)
+ * Silently skips if table doesn't exist
  */
 async function markPromptAsReused(promptId) {
-  await db.query(
-    `UPDATE llm_prompts 
-     SET reused_count = reused_count + 1,
-         last_reused_at = NOW()
-     WHERE id = $1`,
-    [promptId]
-  );
+  const tableExists = await checkTableExists();
+  if (!tableExists || !promptId) {
+    return;
+  }
+
+  try {
+    await db.query(
+      `UPDATE llm_prompts 
+       SET reused_count = reused_count + 1,
+           last_reused_at = NOW()
+       WHERE id = $1`,
+      [promptId]
+    );
+  } catch (error) {
+    console.warn('⚠️  Failed to mark prompt as reused:', error.message);
+  }
 }
 
 /**
  * Get statistics about prompt caching effectiveness
+ * Returns null if table doesn't exist
  */
 async function getPromptStats() {
-  const result = await db.query(`
-    SELECT 
-      COUNT(*) as total_prompts,
-      COUNT(*) FILTER (WHERE root_cause_id IS NOT NULL) as with_results,
-      COUNT(*) FILTER (WHERE reused_count > 0) as reused_prompts,
-      SUM(reused_count) as total_reuses,
-      AVG(confidence) FILTER (WHERE confidence IS NOT NULL) as avg_confidence,
-      SUM(llm_tokens_used) FILTER (WHERE llm_tokens_used IS NOT NULL) as total_tokens_used
-    FROM llm_prompts
-  `);
+  const tableExists = await checkTableExists();
+  if (!tableExists) {
+    return null;
+  }
 
-  return result.rows[0];
+  try {
+    const result = await db.query(`
+      SELECT 
+        COUNT(*) as total_prompts,
+        COUNT(*) FILTER (WHERE root_cause_id IS NOT NULL) as with_results,
+        COUNT(*) FILTER (WHERE reused_count > 0) as reused_prompts,
+        SUM(reused_count) as total_reuses,
+        AVG(confidence) FILTER (WHERE confidence IS NOT NULL) as avg_confidence,
+        SUM(llm_tokens_used) FILTER (WHERE llm_tokens_used IS NOT NULL) as total_tokens_used
+      FROM llm_prompts
+    `);
+
+    return result.rows[0];
+  } catch (error) {
+    console.warn('⚠️  Failed to get prompt stats:', error.message);
+    return null;
+  }
 }
 
 /**
  * Batch generate embeddings for existing prompts without embeddings
+ * Returns early if table doesn't exist
  */
 async function generateMissingPromptEmbeddings() {
-  const result = await db.query(
-    'SELECT id, prompt_text FROM llm_prompts WHERE prompt_embedding IS NULL ORDER BY created_at DESC'
-  );
-
-  const prompts = result.rows;
-  console.log(`📊 Found ${prompts.length} prompts without embeddings`);
-
-  let processed = 0;
-  for (const { id, prompt_text } of prompts) {
-    try {
-      const { embedding } = await localEmbedAdapter.generateEmbedding(prompt_text);
-      await db.query(
-        'UPDATE llm_prompts SET prompt_embedding = $1::vector WHERE id = $2',
-        [JSON.stringify(embedding), id]
-      );
-      processed++;
-      console.log(`✅ [${processed}/${prompts.length}] Generated embedding for prompt ${id}`);
-    } catch (error) {
-      console.error(`❌ Failed for prompt ${id}:`, error.message);
-    }
+  const tableExists = await checkTableExists();
+  if (!tableExists) {
+    console.log('⚠️  Cannot generate embeddings - llm_prompts table not found');
+    return { total: 0, processed: 0 };
   }
 
-  return { total: prompts.length, processed };
+  try {
+    const result = await db.query(
+      'SELECT id, prompt_text FROM llm_prompts WHERE prompt_embedding IS NULL ORDER BY created_at DESC'
+    );
+
+    const prompts = result.rows;
+    console.log(`📊 Found ${prompts.length} prompts without embeddings`);
+
+    let processed = 0;
+    for (const { id, prompt_text } of prompts) {
+      try {
+        const { embedding } = await localEmbedAdapter.generateEmbedding(prompt_text);
+        await db.query(
+          'UPDATE llm_prompts SET prompt_embedding = $1::vector WHERE id = $2',
+          [JSON.stringify(embedding), id]
+        );
+        processed++;
+        console.log(`✅ [${processed}/${prompts.length}] Generated embedding for prompt ${id}`);
+      } catch (error) {
+        console.error(`❌ Failed for prompt ${id}:`, error.message);
+      }
+    }
+
+    return { total: prompts.length, processed };
+  } catch (error) {
+    console.error('❌ Failed to generate missing embeddings:', error.message);
+    return { total: 0, processed: 0 };
+  }
 }
 
 module.exports = {
@@ -297,6 +399,7 @@ module.exports = {
   generateMissingPromptEmbeddings,
   buildContextForEmbedding,
   truncateLogExcerpt,
-  generatePromptHash
+  generatePromptHash,
+  checkTableExists
 };
 
