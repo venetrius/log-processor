@@ -116,19 +116,28 @@ async function getTopRootCauses(options = {}, limit = 10) {
   const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
 
   const query = `
+    WITH latest_root_causes AS (
+      SELECT DISTINCT ON (jrc.job_id)
+        jrc.job_id,
+        jrc.root_cause_id,
+        jrc.confidence,
+        jrc.created_at
+      FROM job_root_causes jrc
+      ORDER BY jrc.job_id, jrc.created_at DESC
+    )
     SELECT 
       rc.id,
       rc.category,
       rc.title,
       rc.description,
       rc.suggested_fix,
-      COUNT(DISTINCT jrc.job_id) as occurrence_count,
-      AVG(jrc.confidence) as avg_confidence,
+      COUNT(DISTINCT lrc.job_id) as occurrence_count,
+      AVG(lrc.confidence) as avg_confidence,
       MAX(wr.created_at) as last_seen,
       STRING_AGG(DISTINCT j.job_name, ', ' ORDER BY j.job_name) as affected_jobs
     FROM root_causes rc
-    JOIN job_root_causes jrc ON rc.id = jrc.root_cause_id
-    JOIN jobs j ON jrc.job_id = j.job_id
+    JOIN latest_root_causes lrc ON rc.id = lrc.root_cause_id
+    JOIN jobs j ON lrc.job_id = j.job_id
     JOIN workflow_runs wr ON j.run_id = wr.run_id
     ${whereClause}
     GROUP BY rc.id, rc.category, rc.title, rc.description, rc.suggested_fix
@@ -255,6 +264,15 @@ async function getStepFailureSummary(options = {}) {
   const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(' AND ')}` : '';
 
   const query = `
+    WITH latest_root_causes AS (
+      SELECT DISTINCT ON (jrc.job_id)
+        jrc.job_id,
+        jrc.root_cause_id,
+        jrc.confidence,
+        jrc.created_at
+      FROM job_root_causes jrc
+      ORDER BY jrc.job_id, jrc.created_at DESC
+    )
     SELECT 
       js.step_name,
       j.job_name,
@@ -265,8 +283,8 @@ async function getStepFailureSummary(options = {}) {
     FROM job_steps js
     JOIN jobs j ON js.job_id = j.job_id
     JOIN workflow_runs wr ON j.run_id = wr.run_id
-    LEFT JOIN job_root_causes jrc ON j.job_id = jrc.job_id
-    LEFT JOIN root_causes rc ON jrc.root_cause_id = rc.id
+    LEFT JOIN latest_root_causes lrc ON j.job_id = lrc.job_id
+    LEFT JOIN root_causes rc ON lrc.root_cause_id = rc.id
     ${whereClause}
     GROUP BY js.step_name, j.job_name
     ORDER BY failure_count DESC, last_failure DESC
@@ -289,13 +307,13 @@ async function getRunDetails(runId) {
       j.status,
       j.conclusion,
       j.started_at,
-      j.completed_at,
-      j.html_url,
+      lrc.confidence,
+      lrc.detection_method
       js.id as step_id,
       js.step_name,
       js.step_number,
-      js.status as step_status,
-      js.conclusion as step_conclusion,
+    LEFT JOIN latest_root_causes lrc ON j.job_id = lrc.job_id
+    LEFT JOIN root_causes rc ON lrc.root_cause_id = rc.id
       js.started_at as step_started_at,
       js.completed_at as step_completed_at,
       ea.id as annotation_id,
