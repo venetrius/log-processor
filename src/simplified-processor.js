@@ -32,8 +32,11 @@ const {
 async function fetchWorkflowRuns(repository, workflowFileName, branch, limit = 5) {
   console.log(`📥 Fetching ${limit} runs for ${workflowFileName} on branch ${branch}...`);
 
-  const command = `gh api repos/${repository}/actions/workflows/${workflowFileName}/runs?branch=${branch}&per_page=${limit} --jq '.workflow_runs'`;
-
+    let command = `gh api "repos/${repository}/actions/workflows/${workflowFileName}/runs?per_page=${limit}`;
+    if (branch) {
+        command += `&branch=${branch}`;
+    }
+    command += `"`;
   try {
     const runs = await runGhCommand(command);
     console.log(`   ✅ Found ${runs.length} runs\n`);
