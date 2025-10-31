@@ -13,7 +13,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { runGhCommand, runCommandToFile } = require('./ghCommand.js');
+const { runGhCommand, runCommandToFile } = require('../ghCommand.js');
 const {
   loadSimplifiedConfig,
   validateSimplifiedConfig,
@@ -32,8 +32,12 @@ const {
 async function fetchWorkflowRuns(repository, workflowFileName, branch, limit = 5) {
   console.log(`📥 Fetching ${limit} runs for ${workflowFileName} on branch ${branch}...`);
 
-  const command = `gh api repos/${repository}/actions/workflows/${workflowFileName}/runs?branch=${branch}&per_page=${limit} --jq '.workflow_runs'`;
-
+    let command = `gh api "repos/${repository}/actions/workflows/${workflowFileName}/runs?per_page=${limit}`;
+    console.log({command});
+    if (branch) {
+        command += `&branch=${branch}`;
+    }
+    command += `"`;
   try {
     const runs = await runGhCommand(command);
     console.log(`   ✅ Found ${runs.length} runs\n`);
@@ -52,7 +56,8 @@ async function fetchWorkflowRuns(repository, workflowFileName, branch, limit = 5
  */
 async function fetchRunJobs(repository, runId) {
   const command = `gh api repos/${repository}/actions/runs/${runId}/jobs --jq '.jobs'`;
-
+    console.log(`   📥 Fetching jobs for run ID ${runId}...`);
+    console.log({command});
   try {
     const jobs = await runGhCommand(command);
     return jobs;
@@ -185,6 +190,7 @@ async function processWorkflow(workflowConfig, repository, logsDirectory) {
     workflowConfig.fetchLastRuns || 5
   );
 
+  console.log({runs});
   if (runs.length === 0) {
     console.log(`⚠️  No runs found for workflow ${workflowConfig.name}\n`);
     return {

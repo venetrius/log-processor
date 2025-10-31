@@ -46,7 +46,7 @@ jobs:
           WORKFLOW_FILE: ${{ github.event.inputs.workflow_file }}
           BRANCH: ${{ github.event.inputs.branch }}
           FETCH_RUNS: ${{ github.event.inputs.fetch_runs }}
-        run: node src/simplified-processor.js
+        run: node src/workflow/simplified-processor.js
 
       - name: Upload processing report
         if: always()
