@@ -1,0 +1,59 @@
+name: Log Processor
+
+on:
+  workflow_dispatch:
+    inputs:
+      workflow_file:
+        description: 'Workflow filename (e.g., ci.yml) or leave empty to use config.json'
+        required: false
+        default: ''
+      branch:
+        description: 'Branch name or leave empty to use config.json'
+        required: false
+        default: ''
+      fetch_runs:
+        description: 'Number of runs to fetch or leave empty to use config.json'
+        required: false
+        default: ''
+  # schedule:
+  #   # Run daily at 2 AM UTC
+  #   - cron: '0 2 * * *'
+
+jobs:
+  process-logs:
+    runs-on: ubuntu-latest
+
+    permissions:
+      actions: read
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run log processor
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW_FILE: ${{ github.event.inputs.workflow_file }}
+          BRANCH: ${{ github.event.inputs.branch }}
+          FETCH_RUNS: ${{ github.event.inputs.fetch_runs }}
+        run: node src/simplified-processor.js
+
+      - name: Upload processing report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: processing-report-${{ github.run_number }}
+          path: reports/
+          retention-days: 30
+          if-no-files-found: warn
+

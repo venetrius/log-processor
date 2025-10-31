@@ -1,0 +1,22 @@
+{
+  "repository": "owner/repository-name",
+  "logsDirectory": "./files",
+  "cacheGHRequests": true,
+  "workflows": [
+    {
+      "name": "CI Pipeline",
+      "branch": "main",
+      "enabled": true,
+      "fetchLastRuns": 5,
+      "workflowFileName": "ci.yml"
+    },
+    {
+      "name": "Tests",
+      "branch": "main",
+      "enabled": false,
+      "fetchLastRuns": 3,
+      "workflowFileName": "test.yml"
+    }
+  ]
+}
+

@@ -1,0 +1,375 @@
+name: Test Workflow
+
+# This workflow is designed to generate test logs with various failure scenarios
+# It will be used to test the log-processor workflow
+
+on:
+  workflow_dispatch:
+    inputs:
+      fail_scenario:
+        description: 'Which scenario to run'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - compilation
+          - tests
+          - lint
+          - timeout
+          - script-error
+#  schedule:
+#    # Run twice daily for testing
+#    - cron: '0 6,18 * * *'
+  push:
+    branches:
+      - 'test-logs/**'
+
+jobs:
+  # Job 1: Always succeeds (for baseline testing)
+  passing-job:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event.inputs.fail_scenario == 'all' || github.event.inputs.fail_scenario == null
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Run successful commands
+        run: |
+          echo "✅ Starting successful job..."
+          echo "Running some commands that will succeed"
+          node --version
+          npm --version
+          echo "All checks passed!"
+          echo "Job completed successfully"
+
+  # Job 2: Compilation/Build Error
+  compilation-error:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event.inputs.fail_scenario == 'all' || github.event.inputs.fail_scenario == 'compilation' || github.event.inputs.fail_scenario == null
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Generate build logs
+        run: |
+          echo "🔨 Starting build process..."
+          echo "Compiling source files..."
+          echo "Processing: src/main.js"
+          echo "Processing: src/utils.js"
+          echo "Processing: src/config.js"
+          sleep 2
+
+      - name: Simulate compilation error
+        run: |
+          echo "Building project..."
+          echo "ERROR: Compilation failed at line 42 in src/buggy-file.js"
+          echo "SyntaxError: Unexpected token '}'"
+          echo "    at Module._compile (internal/modules/cjs/loader.js:1137:30)"
+          echo "    at Object.Module._extensions..js (internal/modules/cjs/loader.js:1157:10)"
+          echo "Build failed with 1 error"
+          exit 1
+
+  # Job 3: Test Failures
+  failing-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event.inputs.fail_scenario == 'all' || github.event.inputs.fail_scenario == 'tests' || github.event.inputs.fail_scenario == null
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: |
+          echo "📦 Installing test dependencies..."
+          echo "Added 127 packages in 5.2s"
+
+      - name: Run unit tests
+        run: |
+          echo "🧪 Running test suite..."
+          echo ""
+          echo "  Test Suite: User Authentication"
+          echo "    ✓ should login with valid credentials (42ms)"
+          echo "    ✓ should reject invalid password (28ms)"
+          echo "    ✗ should handle session timeout (156ms)"
+          echo ""
+          echo "  Test Suite: Data Processing"
+          echo "    ✓ should parse CSV files (31ms)"
+          echo "    ✗ should handle large datasets (1024ms)"
+          echo "    ✗ should validate input data (89ms)"
+          echo ""
+          echo "  Test Suite: API Integration"
+          echo "    ✓ should fetch user data (234ms)"
+          echo "    ✗ should retry on network failure (567ms)"
+          echo ""
+          echo "Tests:     4 failed, 4 passed, 8 total"
+          echo "Duration:  2.341s"
+          echo ""
+          echo "Failed tests:"
+          echo "  1) User Authentication › should handle session timeout"
+          echo "     Expected: true"
+          echo "     Received: false"
+          echo ""
+          echo "  2) Data Processing › should handle large datasets"
+          echo "     Timeout: exceeded 1000ms"
+          echo ""
+          echo "  3) Data Processing › should validate input data"
+          echo "     TypeError: Cannot read property 'length' of undefined"
+          echo ""
+          echo "  4) API Integration › should retry on network failure"
+          echo "     Error: Network request failed after 3 retries"
+          exit 1
+
+  # Job 4: Linting Errors
+  lint-failures:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event.inputs.fail_scenario == 'all' || github.event.inputs.fail_scenario == 'lint' || github.event.inputs.fail_scenario == null
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run linter
+        run: |
+          echo "🔍 Running ESLint..."
+          echo ""
+          echo "src/index.js"
+          echo "  12:5   error    'unusedVariable' is assigned a value but never used    no-unused-vars"
+          echo "  23:15  error    Missing semicolon                                      semi"
+          echo "  45:1   warning  Line exceeds maximum length of 80 characters           max-len"
+          echo "  67:8   error    'require' is not defined                               no-undef"
+          echo ""
+          echo "src/utils.js"
+          echo "  8:10   error    'console' is not defined                               no-undef"
+          echo "  15:3   error    Unexpected console statement                           no-console"
+          echo "  28:12  error    Missing trailing comma                                 comma-dangle"
+          echo ""
+          echo "src/api.js"
+          echo "  5:1    error    'fetch' is not defined                                 no-undef"
+          echo "  34:5   warning  Unexpected empty function                              no-empty-function"
+          echo ""
+          echo "✖ 9 problems (7 errors, 2 warnings)"
+          echo "  3 errors and 0 warnings potentially fixable with --fix"
+          exit 1
+
+  # Job 5: Timeout Simulation
+  timeout-job:
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    if: github.event.inputs.fail_scenario == 'all' || github.event.inputs.fail_scenario == 'timeout' || github.event.inputs.fail_scenario == null
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Start long running process
+        run: |
+          echo "🕐 Starting long-running process..."
+          echo "Processing large dataset..."
+          echo "This may take a while..."
+          for i in {1..10}; do
+            echo "Progress: $((i * 10))%"
+            sleep 10
+          done
+          echo "This should timeout before completing"
+
+  # Job 6: Script Error
+  script-error:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event.inputs.fail_scenario == 'all' || github.event.inputs.fail_scenario == 'script-error' || github.event.inputs.fail_scenario == null
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup environment
+        run: |
+          echo "⚙️  Setting up environment..."
+          echo "Configuring paths..."
+          echo "Loading environment variables..."
+
+      - name: Run deployment script
+        run: |
+          echo "🚀 Running deployment script..."
+          echo "Connecting to server..."
+          echo "ERROR: Connection refused - server.example.com:22"
+          echo "Failed to establish SSH connection"
+          echo "Deployment aborted"
+          exit 1
+
+      - name: Cleanup (should be skipped)
+        if: always()
+        run: |
+          echo "🧹 Running cleanup..."
+          echo "Removing temporary files..."
+
+  # Job 7: Multi-step failure
+  multi-step-failure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event.inputs.fail_scenario == 'all' || github.event.inputs.fail_scenario == null
+    steps:
+      - name: Step 1 - Success
+        run: |
+          echo "✅ Step 1 completed successfully"
+          echo "Initializing..."
+
+      - name: Step 2 - Success
+        run: |
+          echo "✅ Step 2 completed successfully"
+          echo "Loading configuration..."
+
+      - name: Step 3 - Success
+        run: |
+          echo "✅ Step 3 completed successfully"
+          echo "Validating inputs..."
+
+      - name: Step 4 - Failure
+        run: |
+          echo "❌ Step 4 encountered an error"
+          echo "RuntimeError: Database connection pool exhausted"
+          echo "Failed to acquire connection after 30 seconds"
+          exit 1
+
+      - name: Step 5 - Should be skipped
+        run: |
+          echo "This step should never run"
+
+  # Job 8: Environment issues
+  environment-error:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event.inputs.fail_scenario == 'all' || github.event.inputs.fail_scenario == null
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check environment
+        run: |
+          echo "🔍 Checking environment variables..."
+          echo "NODE_ENV: production"
+          echo "LOG_LEVEL: debug"
+
+      - name: Verify required variables
+        run: |
+          echo "❌ Missing required environment variable: DATABASE_URL"
+          echo "❌ Missing required environment variable: API_KEY"
+          echo "❌ Missing required environment variable: SECRET_TOKEN"
+          echo ""
+          echo "Please configure the following environment variables:"
+          echo "  - DATABASE_URL: Database connection string"
+          echo "  - API_KEY: External API authentication key"
+          echo "  - SECRET_TOKEN: Application secret for encryption"
+          echo ""
+          echo "Build cannot proceed without required configuration"
+          exit 1
+
+  # Job 9: Dependency issues
+  dependency-error:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event.inputs.fail_scenario == 'all' || github.event.inputs.fail_scenario == null
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: |
+          echo "📦 Installing dependencies..."
+          echo "npm WARN deprecated package-a@1.0.0: This package is deprecated"
+          echo "npm ERR! code ERESOLVE"
+          echo "npm ERR! ERESOLVE unable to resolve dependency tree"
+          echo "npm ERR! "
+          echo "npm ERR! While resolving: log-processor@1.0.0"
+          echo "npm ERR! Found: react@18.0.0"
+          echo "npm ERR! node_modules/react"
+          echo "npm ERR!   react@\"^18.0.0\" from the root project"
+          echo "npm ERR! "
+          echo "npm ERR! Could not resolve dependency:"
+          echo "npm ERR! peer react@\"^17.0.0\" from some-package@2.0.0"
+          echo "npm ERR! node_modules/some-package"
+          echo "npm ERR!   some-package@\"^2.0.0\" from the root project"
+          echo "npm ERR! "
+          echo "npm ERR! Fix the upstream dependency conflict, or retry"
+          echo "npm ERR! this command with --force or --legacy-peer-deps"
+          exit 1
+
+  # Job 10: Sometimes passes, sometimes fails (flaky test simulation)
+  flaky-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: github.event.inputs.fail_scenario == 'all' || github.event.inputs.fail_scenario == null
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run flaky test
+        run: |
+          echo "🎲 Running flaky test..."
+          # Use the seconds to determine pass/fail (50/50 chance)
+          SECONDS=$(date +%S)
+          RESULT=$((SECONDS % 2))
+          
+          if [ $RESULT -eq 0 ]; then
+            echo "✅ Test passed this time!"
+            echo "All assertions successful"
+            exit 0
+          else
+            echo "❌ Test failed this time!"
+            echo "Assertion failed: Expected value to be truthy"
+            echo "This test is known to be flaky"
+            exit 1
+          fi
+
+  # Summary job (always runs)
+  summary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: always()
+    needs: [passing-job, compilation-error, failing-tests, lint-failures, timeout-job, script-error, multi-step-failure, environment-error, dependency-error, flaky-test]
+    steps:
+      - name: Workflow Summary
+        run: |
+          echo "📊 Test Workflow Summary"
+          echo "========================"
+          echo ""
+          echo "This workflow generates various failure scenarios for testing"
+          echo "the log processor. Check the individual job logs for details."
+          echo ""
+          echo "Scenario: ${{ github.event.inputs.fail_scenario || 'all' }}"
+          echo "Triggered by: ${{ github.event_name }}"
+          echo "Run number: ${{ github.run_number }}"
+          echo ""
+          echo "Jobs executed:"
+          echo "  - passing-job: ${{ needs.passing-job.result }}"
+          echo "  - compilation-error: ${{ needs.compilation-error.result }}"
+          echo "  - failing-tests: ${{ needs.failing-tests.result }}"
+          echo "  - lint-failures: ${{ needs.lint-failures.result }}"
+          echo "  - timeout-job: ${{ needs.timeout-job.result }}"
+          echo "  - script-error: ${{ needs.script-error.result }}"
+          echo "  - multi-step-failure: ${{ needs.multi-step-failure.result }}"
+          echo "  - environment-error: ${{ needs.environment-error.result }}"
+          echo "  - dependency-error: ${{ needs.dependency-error.result }}"
+          echo "  - flaky-test: ${{ needs.flaky-test.result }}"
+

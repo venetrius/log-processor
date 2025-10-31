@@ -1,5 +1,6 @@
 {
   "scripts": {
+    "start": "node src/simplified-processor.js",
     "db:create": "node src/db/schema.js create",
     "db:drop": "node src/db/schema.js drop",
     "db:reset": "node src/db/schema.js reset",
