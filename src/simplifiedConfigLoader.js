@@ -28,7 +28,7 @@ const HARDCODED_CONFIG = {
   workflows: [
     {
       name: "Test Workflow",
-      branch: "main",
+      branch: "master",
       enabled: true,
       fetchLastRuns: 3,
       workflowFileName: "test-workflow.yml"

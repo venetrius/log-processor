@@ -290,7 +290,7 @@ async function main() {
     workflowsToProcess = [{
       name: workflowFile,
       workflowFileName: workflowFile,
-      branch: branch || config.workflows[0]?.branch || 'main',
+      branch: branch || config.workflows[0]?.branch || 'master',
       fetchLastRuns: parseInt(fetchRuns) || 5,
       enabled: true
     }];
