@@ -39,9 +39,8 @@ async function fetchWorkflowRuns(repository, workflowFileName, branch, limit = 5
     }
     command += `"`;
   try {
-    const runs = await runGhCommand(command);
-    console.log(`   ✅ Found ${runs.length} runs\n`);
-    return runs;
+    const response = await runGhCommand(command);
+    return response.workflow_runs || []
   } catch (error) {
     console.error(`   ❌ Failed to fetch workflow runs:`, error.message);
     return [];
@@ -88,7 +87,7 @@ async function downloadJobLog(repository, runId, jobId, jobName, logsDirectory) 
   console.log(`   ⬇️  Downloading log for job: ${jobName} (${jobId})...`);
 
   try {
-    const command = `gh run view ${runId} --job ${jobId} --log --repo ${repository}`;
+    const command = `gh run view --job ${jobId} --log --repo ${repository}`;
     await runCommandToFile(command, logPath);
     console.log(`   💾 Saved log to ${logPath}`);
     return logPath;

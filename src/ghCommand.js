@@ -15,11 +15,11 @@
  * limitations under the License.
  */
 
-const util = require('util');
-const { exec } = require('child_process');
-const fs = require("fs");
-const cacheService = require('./services/cacheGHCLI');
-const { loadConfig } = require('./configLoader');
+const util = require("util");
+const { exec } = require("child_process");
+const fs = require("fs").promises;
+const cacheService = require("./services/cacheGHCLI");
+const { loadConfig } = require("./configLoader");
 
 const execAsync = util.promisify(exec);
 
@@ -34,69 +34,72 @@ async function runGhCommand(command, skipParse) {
     return cached.is_json && !skipParse ? JSON.parse(cached.response) : cached.response;
   }
 
-  // Execute command if not cached
   try {
-    const { stdout } = await execAsync(command, { maxBuffer: 1024 * 1024 * 50 });
+    const { stdout } = await execAsync(command, {
+      maxBuffer: 1024 * 1024 * 50,
+      encoding: "utf8",
+    });
 
-    // Cache the response
     await cacheService.setCachedResponse(command, stdout, !skipParse);
 
-    if(skipParse) {
-        return stdout;
-    }
-    const issues = JSON.parse(stdout);
-    return issues;
+    return skipParse ? stdout : JSON.parse(stdout);
   } catch (error) {
-    console.error('Command failed:', error);
+    console.error("Command failed:", error);
+    throw error;
   }
 }
 
 async function runCommandToFile(command, outputPath) {
-  // Check cache first
   const cached = await cacheService.getCachedResponse(command);
   if (cached) {
-    // Write cached response to file
-    await fs.promises.writeFile(outputPath, cached.response);
-    console.log(`💾 Restored from cache to: ${outputPath}`);
+    await fs.writeFile(outputPath, cached.response, "utf8");
+    console.log(`✅ Restored from cache to: ${outputPath}`);
     return outputPath;
   }
 
-  // Execute command if not cached
-  return new Promise((resolve, reject) => {
-    const child = exec(command, { maxBuffer: 1024 * 1024 * 50 });
-
-    let responseData = '';
-    const output = fs.createWriteStream(outputPath);
-
-    child.stdout.on('data', (chunk) => {
-      responseData += chunk;
+  try {
+    const { stdout, stderr } = await execAsync(command, {
+      maxBuffer: 1024 * 1024 * 50,
+      encoding: "utf8",
     });
 
-    child.stdout.pipe(output);
-    child.stderr.pipe(process.stderr);
+    const stdoutStr = stringifyOutput(stdout);
+    const stderrStr = stringifyOutput(stderr);
 
-    child.on("error", reject);
+    if (stderrStr.trim().length > 0) {
+      console.warn("⚠️ Command produced stderr output:\n", stderrStr);
+    }
 
-    child.on("close", async (code) => {
-      output.end(); // ensure stream closes
-      output.on("finish", async () => {
-        console.log(`Command finished with code ${code}`);
-        if (code === 0) {
-          // Cache the response
-          await cacheService.setCachedResponse(command, responseData, false);
-          resolve(outputPath);
-        } else {
-          reject(new Error(`Command exited with code ${code}`));
-        }
-      });
-    });
-  });
+    await fs.writeFile(outputPath, stdoutStr, "utf8");
+    console.log(`💾 Output written to: ${outputPath}`);
+
+    await cacheService.setCachedResponse(command, stdoutStr, false);
+    return outputPath;
+  } catch (error) {
+    console.error(`❌ Command failed: ${command}`);
+    console.error(error);
+    throw error;
+  }
+}
+
+function stringifyOutput(output) {
+  if (output == null) return "";
+  if (typeof output === "string") return output;
+  if (Buffer.isBuffer(output)) return output.toString("utf8");
+  try {
+    return JSON.stringify(output, null, 2);
+  } catch {
+    return String(output);
+  }
 }
 
 async function fetchSuitId(runId, repository) {
   const command = `gh api /repos/${repository}/actions/runs/${runId} --jq .check_suite_id`;
-  const { stdout } = await execAsync(command, { maxBuffer: 1024 * 50 });
-  console.log({stdout})
+  const { stdout } = await execAsync(command, {
+    maxBuffer: 1024 * 50,
+    encoding: "utf8",
+  });
+  console.log({ stdout });
   return stdout.trim();
 }
 
